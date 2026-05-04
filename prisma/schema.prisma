@@ -1,0 +1,161 @@
+// Auth service schema — MVP
+// Postgres + Prisma. Use citext extension for case-insensitive email.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [citext, pgcrypto]
+}
+
+// ---------- Users ----------
+
+enum UserStatus {
+  PENDING   // registered, email not verified
+  ACTIVE
+  DISABLED  // admin-disabled or self-deactivated
+  LOCKED    // too many failed logins
+}
+
+model User {
+  id              String     @id @default(uuid()) @db.Uuid
+  email           String     @unique @db.Citext
+  emailVerifiedAt DateTime?
+  passwordHash    String     // argon2id encoded string (includes params + salt)
+  status          UserStatus @default(PENDING)
+
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sessions     Session[]
+  mfaFactors   MfaFactor[]
+  emailTokens  EmailToken[]
+  auditEvents  AuditEvent[]
+
+  @@index([status])
+}
+
+// ---------- Sessions / refresh tokens ----------
+// Access tokens are stateless JWTs. Refresh tokens are opaque, server-side, rotatable.
+
+model Session {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @db.Uuid
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // sha256(refresh_token); plaintext is only ever returned once on issuance
+  refreshTokenHash String    @unique
+  // for rotation: when this token is used, we mark it used and link to its replacement
+  replacedById     String?   @db.Uuid
+  usedAt           DateTime?
+  revokedAt        DateTime?
+
+  userAgent        String?
+  ip               String?
+
+  expiresAt        DateTime
+  lastUsedAt       DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// ---------- MFA ----------
+
+enum MfaType {
+  TOTP
+  WEBAUTHN  // passkeys (phase 2, schema reserved)
+}
+
+model MfaFactor {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type      MfaType
+  label     String?  // user-facing name, e.g. "iPhone"
+
+  // TOTP: encrypted shared secret (encrypt at rest with KMS/app key)
+  totpSecretEnc Bytes?
+
+  // WebAuthn (reserved for phase 2)
+  credentialId  Bytes?  @unique
+  publicKey     Bytes?
+  signCount     Int?    @default(0)
+
+  confirmedAt DateTime?  // null until user proves they can use it
+  createdAt   DateTime   @default(now())
+  lastUsedAt  DateTime?
+
+  @@index([userId])
+}
+
+// ---------- Email tokens (verify + password reset) ----------
+
+enum EmailTokenType {
+  VERIFY_EMAIL
+  PASSWORD_RESET
+}
+
+model EmailToken {
+  id        String         @id @default(uuid()) @db.Uuid
+  userId    String         @db.Uuid
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type      EmailTokenType
+  tokenHash String         @unique  // sha256 of the random token sent in email
+
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime       @default(now())
+
+  @@index([userId, type])
+}
+
+// ---------- JWT signing keys ----------
+// We rotate. JWKS exposes public keys. Private keys encrypted at rest.
+
+enum SigningKeyStatus {
+  ACTIVE     // currently signing
+  RETIRING   // still in JWKS for verification, not signing
+  RETIRED    // removed from JWKS
+}
+
+model SigningKey {
+  id         String           @id @default(uuid()) @db.Uuid
+  kid        String           @unique  // exposed in JWT header + JWKS
+  alg        String           // e.g. "EdDSA" or "RS256"
+  publicJwk  Json
+  privateEnc Bytes            // encrypted private key
+  status     SigningKeyStatus @default(ACTIVE)
+
+  createdAt  DateTime         @default(now())
+  retiredAt  DateTime?
+
+  @@index([status])
+}
+
+// ---------- Audit log ----------
+
+model AuditEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String?  @db.Uuid
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  event     String   // login.success, login.fail, password.reset, mfa.enrolled, token.refresh, ...
+  ip        String?
+  userAgent String?
+  metadata  Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([event, createdAt])
+}
