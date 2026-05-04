@@ -1,0 +1,16 @@
+# Railway service config — auth-service
+# Postgres + Redis are provisioned as separate Railway plugins in the same project.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "node dist/server.js"
+healthcheckPath = "/healthz"
+healthcheckTimeout = 10
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+
+# Migrations: run on deploy. Prisma needs DATABASE_URL at this point.
+preDeployCommand = "npx prisma migrate deploy"

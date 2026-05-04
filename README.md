@@ -40,8 +40,15 @@ src/crypto/            # argon2, jwt, key rotation (TBD)
 ## Local dev
 ```
 cp .env.example .env
-docker compose up -d postgres redis   # TBD
+docker compose up -d
 npm install
 npm run prisma:migrate
 npm run dev
 ```
+
+## Deployment (Railway)
+- One Railway project, three components: `auth-service` (this repo, Dockerfile build), Postgres plugin, Redis plugin.
+- `railway.toml` runs `prisma migrate deploy` before each deploy and healthchecks `/healthz`.
+- Required env vars: `DATABASE_URL`, `REDIS_URL`, `APP_ENCRYPTION_KEY`, `JWT_ISSUER`, `JWT_AUDIENCE`, `EMAIL_SERVICE_URL`, `EMAIL_SERVICE_TOKEN`.
+- Signing private keys + `APP_ENCRYPTION_KEY` should be injected from a real secret store (Doppler / Infisical), not pasted into the Railway UI.
+- Put Cloudflare in front and add WAF rate limits on `/v1/login`, `/v1/register`, `/v1/password/forgot`.
