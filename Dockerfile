@@ -4,8 +4,7 @@
 FROM node:22-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci --include=dev
+RUN npm ci --include=dev
 
 # ---- build ----
 FROM node:22-bookworm-slim AS build
