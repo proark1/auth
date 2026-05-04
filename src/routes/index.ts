@@ -7,7 +7,7 @@ import type {
   FastifyBaseLogger,
 } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { z } from 'zod';
+import { z } from 'zod/v4';
 import { jwks } from '../crypto/signing.js';
 import { env } from '../infra/env.js';
 import { registerUser, verifyEmail, resendVerification } from '../domain/users.js';
@@ -50,6 +50,38 @@ const passwordSchema = z
 
 const emailSchema = z.string().email().max(254);
 
+// Shared response schemas
+const errorResponse = z.object({
+  code: z.string(),
+  message: z.string().optional(),
+  issues: z.array(z.unknown()).optional(),
+});
+
+const tokenResponse = z.object({
+  access_token: z.string(),
+  refresh_token: z.string(),
+  token_type: z.literal('Bearer'),
+  expires_in: z.number().int(),
+  refresh_token_expires_at: z.string().datetime(),
+});
+
+const mfaChallengeResponse = z.object({
+  mfa_required: z.literal(true),
+  mfa_token: z.string(),
+});
+
+const loginResponse = z.union([tokenResponse, mfaChallengeResponse]);
+
+const noContentResponses = {
+  204: z.null().describe('No content'),
+  400: errorResponse,
+  401: errorResponse,
+};
+
+const authedNoContentResponses = {
+  ...noContentResponses,
+};
+
 function ctxFrom(req: FastifyRequest) {
   return { ip: req.ip, userAgent: req.headers['user-agent'] };
 }
@@ -58,17 +90,60 @@ export async function registerRoutes(app: AppInstance) {
   const r = app;
 
   // --- Public discovery ---
-  r.get('/healthz', async () => ({ ok: true }));
-  r.get('/.well-known/jwks.json', async () => jwks());
-  r.get('/.well-known/openid-configuration', async () => {
-    const e = env();
-    return {
-      issuer: e.JWT_ISSUER,
-      jwks_uri: `${e.JWT_ISSUER.replace(/\/$/, '')}/.well-known/jwks.json`,
-      id_token_signing_alg_values_supported: ['EdDSA'],
-      response_types_supported: ['token'],
-      subject_types_supported: ['public'],
-    };
+  r.route({
+    method: 'GET',
+    url: '/healthz',
+    schema: {
+      tags: ['discovery'],
+      summary: 'Liveness probe',
+      response: {
+        200: z.object({ ok: z.literal(true) }),
+      },
+    },
+    handler: async () => ({ ok: true as const }),
+  });
+
+  r.route({
+    method: 'GET',
+    url: '/.well-known/jwks.json',
+    schema: {
+      tags: ['discovery'],
+      summary: 'JWKS for verifying issued JWTs',
+      response: {
+        200: z.object({
+          keys: z.array(z.looseObject({})),
+        }),
+      },
+    },
+    handler: async () => jwks() as unknown as { keys: Record<string, unknown>[] },
+  });
+
+  r.route({
+    method: 'GET',
+    url: '/.well-known/openid-configuration',
+    schema: {
+      tags: ['discovery'],
+      summary: 'OpenID Connect discovery document',
+      response: {
+        200: z.object({
+          issuer: z.string(),
+          jwks_uri: z.string(),
+          id_token_signing_alg_values_supported: z.array(z.string()),
+          response_types_supported: z.array(z.string()),
+          subject_types_supported: z.array(z.string()),
+        }),
+      },
+    },
+    handler: async () => {
+      const e = env();
+      return {
+        issuer: e.JWT_ISSUER,
+        jwks_uri: `${e.JWT_ISSUER.replace(/\/$/, '')}/.well-known/jwks.json`,
+        id_token_signing_alg_values_supported: ['EdDSA'],
+        response_types_supported: ['token'],
+        subject_types_supported: ['public'],
+      };
+    },
   });
 
   // --- Registration & email verification ---
@@ -77,11 +152,20 @@ export async function registerRoutes(app: AppInstance) {
   r.route({
     method: 'POST',
     url: '/v1/register',
-    schema: { body: registerBody },
+    schema: {
+      tags: ['registration'],
+      summary: 'Register a new account',
+      description:
+        'Always returns 202 regardless of whether the email is already registered, to prevent enumeration.',
+      body: registerBody,
+      response: {
+        202: z.object({ status: z.literal('pending_verification') }),
+        400: errorResponse,
+      },
+    },
     handler: async (req, reply) => {
       await registerUser(req.body as z.infer<typeof registerBody>, ctxFrom(req));
-      // Always 202 — caller cannot infer whether email was new.
-      return reply.code(202).send({ status: 'pending_verification' });
+      return reply.code(202).send({ status: 'pending_verification' as const });
     },
   });
 
@@ -89,11 +173,19 @@ export async function registerRoutes(app: AppInstance) {
   r.route({
     method: 'POST',
     url: '/v1/email/verify',
-    schema: { body: verifyBody },
+    schema: {
+      tags: ['registration'],
+      summary: 'Verify email with token',
+      body: verifyBody,
+      response: {
+        200: z.object({ status: z.literal('verified') }),
+        400: errorResponse,
+      },
+    },
     handler: async (req, reply) => {
       const { token } = req.body as z.infer<typeof verifyBody>;
       await verifyEmail(token, ctxFrom(req));
-      return reply.code(200).send({ status: 'verified' });
+      return reply.code(200).send({ status: 'verified' as const });
     },
   });
 
@@ -101,11 +193,20 @@ export async function registerRoutes(app: AppInstance) {
   r.route({
     method: 'POST',
     url: '/v1/email/verify/resend',
-    schema: { body: resendBody },
+    schema: {
+      tags: ['registration'],
+      summary: 'Resend verification email',
+      description: 'Always returns 202 to prevent enumeration.',
+      body: resendBody,
+      response: {
+        202: z.object({ status: z.literal('queued') }),
+        400: errorResponse,
+      },
+    },
     handler: async (req, reply) => {
       const { email } = req.body as z.infer<typeof resendBody>;
       await resendVerification(email, ctxFrom(req));
-      return reply.code(202).send({ status: 'queued' });
+      return reply.code(202).send({ status: 'queued' as const });
     },
   });
 
@@ -118,11 +219,22 @@ export async function registerRoutes(app: AppInstance) {
   r.route({
     method: 'POST',
     url: '/v1/login',
-    schema: { body: loginBody },
+    schema: {
+      tags: ['auth'],
+      summary: 'Log in with email and password',
+      description:
+        'Returns either an access/refresh token pair, or an MFA challenge if a TOTP factor is enrolled.',
+      body: loginBody,
+      response: {
+        200: loginResponse,
+        400: errorResponse,
+        401: errorResponse,
+      },
+    },
     handler: async (req, reply) => {
       const result = await login(req.body as z.infer<typeof loginBody>, ctxFrom(req));
       if (result.kind === 'mfa_required') {
-        return reply.code(200).send({ mfa_required: true, mfa_token: result.mfaToken });
+        return reply.code(200).send({ mfa_required: true as const, mfa_token: result.mfaToken });
       }
       return reply.code(200).send(tokenPayload(result.session));
     },
@@ -135,7 +247,16 @@ export async function registerRoutes(app: AppInstance) {
   r.route({
     method: 'POST',
     url: '/v1/login/mfa',
-    schema: { body: loginMfaBody },
+    schema: {
+      tags: ['auth', 'mfa'],
+      summary: 'Complete login with TOTP code',
+      body: loginMfaBody,
+      response: {
+        200: tokenResponse,
+        400: errorResponse,
+        401: errorResponse,
+      },
+    },
     handler: async (req, reply) => {
       const { mfa_token, code } = req.body as z.infer<typeof loginMfaBody>;
       const session = await completeMfaLogin({
@@ -152,7 +273,16 @@ export async function registerRoutes(app: AppInstance) {
   r.route({
     method: 'POST',
     url: '/v1/token/refresh',
-    schema: { body: refreshBody },
+    schema: {
+      tags: ['auth'],
+      summary: 'Rotate refresh token, get a new access/refresh pair',
+      body: refreshBody,
+      response: {
+        200: tokenResponse,
+        400: errorResponse,
+        401: errorResponse,
+      },
+    },
     handler: async (req, reply) => {
       const { refresh_token } = req.body as z.infer<typeof refreshBody>;
       const result = await rotateSession(refresh_token, ctxFrom(req));
@@ -165,13 +295,19 @@ export async function registerRoutes(app: AppInstance) {
     method: 'POST',
     url: '/v1/logout',
     preHandler: [requireUser],
-    schema: { body: logoutBody },
+    schema: {
+      tags: ['auth'],
+      summary: 'Log out (revoke refresh token)',
+      security: [{ bearerAuth: [] }],
+      body: logoutBody,
+      response: authedNoContentResponses,
+    },
     handler: async (req, reply) => {
       const body = req.body as z.infer<typeof logoutBody>;
       if (body.refresh_token) {
         await revokeSessionByToken(body.refresh_token);
       }
-      return reply.code(204).send();
+      return reply.code(204).send(null);
     },
   });
 
@@ -181,12 +317,20 @@ export async function registerRoutes(app: AppInstance) {
   r.route({
     method: 'POST',
     url: '/v1/password/forgot',
-    schema: { body: forgotBody },
+    schema: {
+      tags: ['password'],
+      summary: 'Request a password reset link',
+      description: 'Always returns 202 to prevent enumeration.',
+      body: forgotBody,
+      response: {
+        202: z.object({ status: z.literal('queued') }),
+        400: errorResponse,
+      },
+    },
     handler: async (req, reply) => {
       const { email } = req.body as z.infer<typeof forgotBody>;
       await forgotPassword(email, ctxFrom(req));
-      // Always 202 — no enumeration.
-      return reply.code(202).send({ status: 'queued' });
+      return reply.code(202).send({ status: 'queued' as const });
     },
   });
 
@@ -197,11 +341,19 @@ export async function registerRoutes(app: AppInstance) {
   r.route({
     method: 'POST',
     url: '/v1/password/reset',
-    schema: { body: resetBody },
+    schema: {
+      tags: ['password'],
+      summary: 'Reset password using a reset token',
+      body: resetBody,
+      response: {
+        200: z.object({ status: z.literal('reset') }),
+        400: errorResponse,
+      },
+    },
     handler: async (req, reply) => {
       const { token, new_password } = req.body as z.infer<typeof resetBody>;
       await resetPassword(token, new_password, ctxFrom(req));
-      return reply.code(200).send({ status: 'reset' });
+      return reply.code(200).send({ status: 'reset' as const });
     },
   });
 
@@ -213,20 +365,43 @@ export async function registerRoutes(app: AppInstance) {
     method: 'POST',
     url: '/v1/password/change',
     preHandler: [requireUser],
-    schema: { body: changeBody },
+    schema: {
+      tags: ['password'],
+      summary: 'Change password (authenticated)',
+      security: [{ bearerAuth: [] }],
+      body: changeBody,
+      response: authedNoContentResponses,
+    },
     handler: async (req, reply) => {
       const me = currentUser(req);
       const { current_password, new_password } = req.body as z.infer<typeof changeBody>;
       await changePassword(me.id, current_password, new_password, ctxFrom(req));
-      return reply.code(204).send();
+      return reply.code(204).send(null);
     },
   });
 
   // --- Current user ---
+  const meResponse = z.object({
+    id: z.string().uuid(),
+    email: z.string().email(),
+    email_verified: z.boolean(),
+    status: z.string(),
+    created_at: z.string().datetime(),
+  });
   r.route({
     method: 'GET',
     url: '/v1/me',
     preHandler: [requireUser],
+    schema: {
+      tags: ['me'],
+      summary: 'Current authenticated user',
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: meResponse,
+        401: errorResponse,
+        404: errorResponse,
+      },
+    },
     handler: async (req) => {
       const me = currentUser(req);
       const u = await prisma.user.findUnique({ where: { id: me.id } });
@@ -248,7 +423,20 @@ export async function registerRoutes(app: AppInstance) {
     method: 'POST',
     url: '/v1/mfa/totp/setup',
     preHandler: [requireUser],
-    schema: { body: totpSetupBody },
+    schema: {
+      tags: ['mfa'],
+      summary: 'Begin TOTP enrollment (returns secret + otpauth URI)',
+      security: [{ bearerAuth: [] }],
+      body: totpSetupBody,
+      response: {
+        200: z.object({
+          factor_id: z.string().uuid(),
+          secret: z.string(),
+          otpauth_uri: z.string(),
+        }),
+        401: errorResponse,
+      },
+    },
     handler: async (req) => {
       const me = currentUser(req);
       const { label } = req.body as z.infer<typeof totpSetupBody>;
@@ -269,12 +457,18 @@ export async function registerRoutes(app: AppInstance) {
     method: 'POST',
     url: '/v1/mfa/totp/confirm',
     preHandler: [requireUser],
-    schema: { body: totpConfirmBody },
+    schema: {
+      tags: ['mfa'],
+      summary: 'Confirm TOTP enrollment with first code',
+      security: [{ bearerAuth: [] }],
+      body: totpConfirmBody,
+      response: authedNoContentResponses,
+    },
     handler: async (req, reply) => {
       const me = currentUser(req);
       const { factor_id, code } = req.body as z.infer<typeof totpConfirmBody>;
       await confirmTotp(me.id, factor_id, code, ctxFrom(req));
-      return reply.code(204).send();
+      return reply.code(204).send(null);
     },
   });
 
@@ -283,12 +477,18 @@ export async function registerRoutes(app: AppInstance) {
     method: 'DELETE',
     url: '/v1/mfa/totp/:id',
     preHandler: [requireUser],
-    schema: { params: totpDeleteParams },
+    schema: {
+      tags: ['mfa'],
+      summary: 'Remove a TOTP factor',
+      security: [{ bearerAuth: [] }],
+      params: totpDeleteParams,
+      response: authedNoContentResponses,
+    },
     handler: async (req, reply) => {
       const me = currentUser(req);
       const { id } = req.params as z.infer<typeof totpDeleteParams>;
       await deleteTotp(me.id, id, ctxFrom(req));
-      return reply.code(204).send();
+      return reply.code(204).send(null);
     },
   });
 
@@ -300,10 +500,25 @@ export async function registerRoutes(app: AppInstance) {
     client_secret: z.string().min(1).max(512),
     scope: z.string().max(512).optional(), // space-separated, optional narrowing
   });
+  const oauthTokenResponse = z.object({
+    access_token: z.string(),
+    token_type: z.literal('Bearer'),
+    expires_in: z.number().int(),
+    scope: z.string(),
+  });
   r.route({
     method: 'POST',
     url: '/v1/oauth/token',
-    schema: { body: oauthTokenBody },
+    schema: {
+      tags: ['oauth'],
+      summary: 'OAuth2 client_credentials token endpoint',
+      body: oauthTokenBody,
+      response: {
+        200: oauthTokenResponse,
+        400: errorResponse,
+        401: errorResponse,
+      },
+    },
     handler: async (req, reply) => {
       const body = req.body as z.infer<typeof oauthTokenBody>;
       const requestedScopes = body.scope ? body.scope.split(' ').filter(Boolean) : undefined;
@@ -317,7 +532,7 @@ export async function registerRoutes(app: AppInstance) {
       );
       return reply.code(200).send({
         access_token: result.accessToken,
-        token_type: 'Bearer',
+        token_type: 'Bearer' as const,
         expires_in: result.expiresIn,
         scope: result.scopes.join(' '),
       });
@@ -325,10 +540,26 @@ export async function registerRoutes(app: AppInstance) {
   });
 
   // --- Sessions ---
+  const sessionItem = z.object({
+    id: z.string().uuid(),
+    createdAt: z.string().datetime().or(z.date()),
+    lastUsedAt: z.string().datetime().or(z.date()).nullable().optional(),
+    ip: z.string().nullable().optional(),
+    userAgent: z.string().nullable().optional(),
+  });
   r.route({
     method: 'GET',
     url: '/v1/sessions',
     preHandler: [requireUser],
+    schema: {
+      tags: ['sessions'],
+      summary: 'List active sessions for current user',
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: z.array(sessionItem),
+        401: errorResponse,
+      },
+    },
     handler: async (req) => {
       const me = currentUser(req);
       return listSessions(me.id);
@@ -340,12 +571,18 @@ export async function registerRoutes(app: AppInstance) {
     method: 'DELETE',
     url: '/v1/sessions/:id',
     preHandler: [requireUser],
-    schema: { params: sessionParams },
+    schema: {
+      tags: ['sessions'],
+      summary: 'Revoke a session by id',
+      security: [{ bearerAuth: [] }],
+      params: sessionParams,
+      response: authedNoContentResponses,
+    },
     handler: async (req, reply) => {
       const me = currentUser(req);
       const { id } = req.params as z.infer<typeof sessionParams>;
       await revokeSessionById(id, me.id);
-      return reply.code(204).send();
+      return reply.code(204).send(null);
     },
   });
 }
@@ -360,7 +597,7 @@ function tokenPayload(s: IssuedTokenLike) {
   return {
     access_token: s.accessToken,
     refresh_token: s.refreshToken,
-    token_type: 'Bearer',
+    token_type: 'Bearer' as const,
     expires_in: env().ACCESS_TOKEN_TTL_SECONDS,
     refresh_token_expires_at: s.refreshTokenExpiresAt.toISOString(),
   };
