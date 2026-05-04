@@ -4,7 +4,7 @@ import type { SigningKey } from '@prisma/client';
 import { prisma } from '../infra/db.js';
 import { encrypt, decrypt } from './encryption.js';
 import { env } from '../infra/env.js';
-import { accessClaimsSchema, type AccessClaims } from './claims.js';
+import { accessClaimsSchema, mfaClaimsSchema, type AccessClaims, type MfaClaims } from './claims.js';
 
 const ALG = 'EdDSA';
 const CRV = 'Ed25519';
@@ -92,11 +92,41 @@ export async function issueAccessToken(input: IssueAccessInput): Promise<string>
 }
 
 export async function verifyAccessToken(token: string): Promise<AccessClaims> {
+  const payload = await verifyAnyToken(token);
+  return accessClaimsSchema.parse(payload);
+}
+
+// ---------- MFA challenge token ----------
+
+const MFA_CHALLENGE_TTL_SECONDS = 5 * 60;
+
+export async function issueMfaChallenge(userId: string): Promise<string> {
+  const e = env();
+  const key = await getActiveKey();
+  const privateJwk = JSON.parse(decrypt(key.privateEnc).toString('utf8'));
+  const privateKey = await importJWK(privateJwk, ALG);
+
+  return new SignJWT({ typ: 'mfa' })
+    .setProtectedHeader({ alg: ALG, kid: key.kid })
+    .setIssuer(e.JWT_ISSUER)
+    .setAudience(e.JWT_AUDIENCE)
+    .setSubject(userId)
+    .setIssuedAt()
+    .setExpirationTime(`${MFA_CHALLENGE_TTL_SECONDS}s`)
+    .setJti(randomUUID())
+    .sign(privateKey);
+}
+
+export async function verifyMfaChallenge(token: string): Promise<MfaClaims> {
+  const payload = await verifyAnyToken(token);
+  return mfaClaimsSchema.parse(payload);
+}
+
+// ---------- shared verifier ----------
+
+async function verifyAnyToken(token: string): Promise<unknown> {
   const e = env();
   const { keys } = await jwks();
-
-  // Try each verification key (ACTIVE + RETIRING). jose can accept a key
-  // function — pick the one whose kid matches the token header.
   const { payload } = await jwtVerify(
     token,
     async (header) => {
@@ -106,6 +136,5 @@ export async function verifyAccessToken(token: string): Promise<AccessClaims> {
     },
     { issuer: e.JWT_ISSUER, audience: e.JWT_AUDIENCE },
   );
-
-  return accessClaimsSchema.parse(payload);
+  return payload;
 }
