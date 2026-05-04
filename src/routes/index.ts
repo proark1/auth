@@ -13,6 +13,7 @@ import { env } from '../infra/env.js';
 import { registerUser, verifyEmail, resendVerification } from '../domain/users.js';
 import { login } from '../domain/login.js';
 import { forgotPassword, resetPassword, changePassword } from '../domain/password.js';
+import { setupTotp, confirmTotp, deleteTotp, completeMfaLogin } from '../domain/mfa.js';
 import {
   rotateSession,
   revokeSessionByToken,
@@ -119,11 +120,32 @@ export async function registerRoutes(app: AppInstance) {
     schema: { body: loginBody },
     handler: async (req, reply) => {
       const result = await login(req.body as z.infer<typeof loginBody>, ctxFrom(req));
-      return reply.code(200).send(tokenPayload(result));
+      if (result.kind === 'mfa_required') {
+        return reply.code(200).send({ mfa_required: true, mfa_token: result.mfaToken });
+      }
+      return reply.code(200).send(tokenPayload(result.session));
     },
   });
 
-  r.post('/v1/login/mfa', async () => { throw new Error('TODO'); }); // slice 5
+  const loginMfaBody = z.object({
+    mfa_token: z.string().min(1).max(2048),
+    code: z.string().regex(/^\d{6}$/),
+  });
+  r.route({
+    method: 'POST',
+    url: '/v1/login/mfa',
+    schema: { body: loginMfaBody },
+    handler: async (req, reply) => {
+      const { mfa_token, code } = req.body as z.infer<typeof loginMfaBody>;
+      const session = await completeMfaLogin({
+        mfaToken: mfa_token,
+        code,
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+      return reply.code(200).send(tokenPayload(session));
+    },
+  });
 
   const refreshBody = z.object({ refresh_token: z.string().min(1).max(512) });
   r.route({
@@ -218,10 +240,56 @@ export async function registerRoutes(app: AppInstance) {
     },
   });
 
-  // --- MFA (TOTP) ---  (slice 5)
-  r.post('/v1/mfa/totp/setup', { preHandler: [requireUser] }, async () => { throw new Error('TODO'); });
-  r.post('/v1/mfa/totp/confirm', { preHandler: [requireUser] }, async () => { throw new Error('TODO'); });
-  r.delete('/v1/mfa/totp/:id', { preHandler: [requireUser] }, async () => { throw new Error('TODO'); });
+  // --- MFA (TOTP) ---
+
+  const totpSetupBody = z.object({ label: z.string().max(100).optional() });
+  r.route({
+    method: 'POST',
+    url: '/v1/mfa/totp/setup',
+    preHandler: [requireUser],
+    schema: { body: totpSetupBody },
+    handler: async (req) => {
+      const me = currentUser(req);
+      const { label } = req.body as z.infer<typeof totpSetupBody>;
+      const result = await setupTotp(me.id, label, ctxFrom(req));
+      return {
+        factor_id: result.factorId,
+        secret: result.secret,
+        otpauth_uri: result.otpauthUri,
+      };
+    },
+  });
+
+  const totpConfirmBody = z.object({
+    factor_id: z.string().uuid(),
+    code: z.string().regex(/^\d{6}$/),
+  });
+  r.route({
+    method: 'POST',
+    url: '/v1/mfa/totp/confirm',
+    preHandler: [requireUser],
+    schema: { body: totpConfirmBody },
+    handler: async (req, reply) => {
+      const me = currentUser(req);
+      const { factor_id, code } = req.body as z.infer<typeof totpConfirmBody>;
+      await confirmTotp(me.id, factor_id, code, ctxFrom(req));
+      return reply.code(204).send();
+    },
+  });
+
+  const totpDeleteParams = z.object({ id: z.string().uuid() });
+  r.route({
+    method: 'DELETE',
+    url: '/v1/mfa/totp/:id',
+    preHandler: [requireUser],
+    schema: { params: totpDeleteParams },
+    handler: async (req, reply) => {
+      const me = currentUser(req);
+      const { id } = req.params as z.infer<typeof totpDeleteParams>;
+      await deleteTotp(me.id, id, ctxFrom(req));
+      return reply.code(204).send();
+    },
+  });
 
   // --- Sessions ---
   r.route({

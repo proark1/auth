@@ -34,3 +34,18 @@ export const serviceClaimsSchema = z.object({
 });
 
 export type ServiceClaims = z.infer<typeof serviceClaimsSchema>;
+
+// Short-lived challenge token issued by /v1/login when a user has a confirmed
+// MFA factor. Caller exchanges it + a TOTP code for a real session via
+// /v1/login/mfa. Not a usable access token — `requireUser` rejects typ != access.
+export const mfaClaimsSchema = z.object({
+  iss: z.string().url(),
+  aud: z.union([z.string(), z.array(z.string())]),
+  sub: z.string().uuid(),
+  iat: z.number().int(),
+  exp: z.number().int(),
+  jti: z.string(),
+  typ: z.literal('mfa'),
+});
+
+export type MfaClaims = z.infer<typeof mfaClaimsSchema>;

@@ -3,6 +3,8 @@ import { verifyPassword, needsRehash, hashPassword } from '../crypto/password.js
 import { audit } from '../infra/audit.js';
 import { AppError } from '../middleware/errors.js';
 import { issueSession, type IssuedSession } from './sessions.js';
+import { userHasConfirmedMfa } from './mfa.js';
+import { issueMfaChallenge } from '../crypto/signing.js';
 // changePassword moved to ./password.ts; see there for the authenticated flow.
 
 const MAX_FAILED_LOGINS = 5;
@@ -18,7 +20,11 @@ export interface LoginCtx {
   userAgent?: string | undefined;
 }
 
-export async function login(input: LoginInput, ctx: LoginCtx = {}): Promise<IssuedSession> {
+export type LoginResult =
+  | { kind: 'session'; session: IssuedSession }
+  | { kind: 'mfa_required'; mfaToken: string };
+
+export async function login(input: LoginInput, ctx: LoginCtx = {}): Promise<LoginResult> {
   const email = input.email.toLowerCase().trim();
 
   // Generic error — never reveal which of "no such email" vs "wrong password".
@@ -77,8 +83,14 @@ export async function login(input: LoginInput, ctx: LoginCtx = {}): Promise<Issu
     await prisma.user.update({ where: { id: user.id }, data: updates });
   }
 
-  // TODO slice 5: if user has a confirmed MFA factor, return { mfaRequired, mfaToken }
-  // and only issue the session after /v1/login/mfa succeeds.
+  // If the user has a confirmed MFA factor, do NOT issue a session yet.
+  // Hand back a short-lived MFA challenge token; the caller must complete
+  // /v1/login/mfa with a valid TOTP code to receive tokens.
+  if (await userHasConfirmedMfa(user.id)) {
+    const mfaToken = await issueMfaChallenge(user.id);
+    await audit({ event: 'login.mfa_required', userId: user.id, ...ctx });
+    return { kind: 'mfa_required', mfaToken };
+  }
 
   const result = await issueSession({
     userId: user.id,
@@ -94,6 +106,6 @@ export async function login(input: LoginInput, ctx: LoginCtx = {}): Promise<Issu
     ...ctx,
     metadata: { sessionId: result.sessionId },
   });
-  return result;
+  return { kind: 'session', session: result };
 }
 
