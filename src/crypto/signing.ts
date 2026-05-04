@@ -54,7 +54,7 @@ export async function jwks(): Promise<{ keys: JWK[] }> {
   const rows = await prisma.signingKey.findMany({
     where: { status: { in: ['ACTIVE', 'RETIRING'] } },
   });
-  return { keys: rows.map((r) => r.publicJwk as JWK) };
+  return { keys: rows.map((r) => r.publicJwk as unknown as JWK) };
 }
 
 // ---------- sign / verify ----------
