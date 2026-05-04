@@ -4,7 +4,14 @@ import type { SigningKey } from '@prisma/client';
 import { prisma } from '../infra/db.js';
 import { encrypt, decrypt } from './encryption.js';
 import { env } from '../infra/env.js';
-import { accessClaimsSchema, mfaClaimsSchema, type AccessClaims, type MfaClaims } from './claims.js';
+import {
+  accessClaimsSchema,
+  mfaClaimsSchema,
+  serviceClaimsSchema,
+  type AccessClaims,
+  type MfaClaims,
+  type ServiceClaims,
+} from './claims.js';
 
 const ALG = 'EdDSA';
 const CRV = 'Ed25519';
@@ -120,6 +127,53 @@ export async function issueMfaChallenge(userId: string): Promise<string> {
 export async function verifyMfaChallenge(token: string): Promise<MfaClaims> {
   const payload = await verifyAnyToken(token);
   return mfaClaimsSchema.parse(payload);
+}
+
+// ---------- service-to-service token ----------
+
+const SERVICE_TOKEN_TTL_SECONDS = 3600;
+
+export interface IssueServiceInput {
+  clientId: string;
+  scopes: string[];
+}
+
+export async function issueServiceToken(input: IssueServiceInput): Promise<{ token: string; expiresIn: number }> {
+  const e = env();
+  const key = await getActiveKey();
+  const privateJwk = JSON.parse(decrypt(key.privateEnc).toString('utf8'));
+  const privateKey = await importJWK(privateJwk, ALG);
+
+  const token = await new SignJWT({
+    typ: 'service',
+    scope: input.scopes.join(' '),
+  })
+    .setProtectedHeader({ alg: ALG, kid: key.kid })
+    .setIssuer(e.JWT_ISSUER)
+    .setAudience('service')
+    .setSubject(input.clientId)
+    .setIssuedAt()
+    .setExpirationTime(`${SERVICE_TOKEN_TTL_SECONDS}s`)
+    .setJti(randomUUID())
+    .sign(privateKey);
+
+  return { token, expiresIn: SERVICE_TOKEN_TTL_SECONDS };
+}
+
+export async function verifyServiceToken(token: string): Promise<ServiceClaims> {
+  // Service tokens carry aud='service' (literal), not the user-token audience.
+  const e = env();
+  const { keys } = await jwks();
+  const { payload } = await jwtVerify(
+    token,
+    async (header) => {
+      const jwk = keys.find((k) => k.kid === header.kid);
+      if (!jwk) throw new Error('unknown signing key');
+      return importJWK(jwk, ALG);
+    },
+    { issuer: e.JWT_ISSUER, audience: 'service' },
+  );
+  return serviceClaimsSchema.parse(payload);
 }
 
 // ---------- shared verifier ----------

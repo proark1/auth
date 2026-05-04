@@ -1,5 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { verifyAccessToken } from '../crypto/signing.js';
+import { verifyAccessToken, verifyServiceToken } from '../crypto/signing.js';
 import { AppError } from './errors.js';
 
 export interface AuthedUser {
@@ -10,9 +10,15 @@ export interface AuthedUser {
   orgId: string | undefined;
 }
 
+export interface AuthedService {
+  clientId: string;
+  scopes: string[];
+}
+
 declare module 'fastify' {
   interface FastifyRequest {
     user?: AuthedUser;
+    service?: AuthedService;
   }
 }
 
@@ -53,4 +59,40 @@ export function currentUser(req: FastifyRequest): AuthedUser {
     throw new AppError(401, 'unauthorized', 'not authenticated');
   }
   return req.user;
+}
+
+// Service-token equivalent of requireUser. Rejects user tokens — services
+// must use the client_credentials grant to get a typ='service' token.
+export async function requireService(req: FastifyRequest, _reply: FastifyReply): Promise<void> {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Bearer ')) {
+    throw new AppError(401, 'unauthorized', 'missing bearer token');
+  }
+  const token = auth.slice('Bearer '.length).trim();
+  if (!token) {
+    throw new AppError(401, 'unauthorized', 'missing bearer token');
+  }
+
+  let claims;
+  try {
+    claims = await verifyServiceToken(token);
+  } catch {
+    throw new AppError(401, 'unauthorized', 'invalid or expired token');
+  }
+
+  if (claims.typ !== 'service') {
+    throw new AppError(401, 'unauthorized', 'wrong token type');
+  }
+
+  req.service = {
+    clientId: claims.sub,
+    scopes: (claims.scope ?? '').split(' ').filter(Boolean),
+  };
+}
+
+export function currentService(req: FastifyRequest): AuthedService {
+  if (!req.service) {
+    throw new AppError(401, 'unauthorized', 'not a service caller');
+  }
+  return req.service;
 }
