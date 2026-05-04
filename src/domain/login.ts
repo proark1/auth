@@ -3,6 +3,7 @@ import { verifyPassword, needsRehash, hashPassword } from '../crypto/password.js
 import { audit } from '../infra/audit.js';
 import { AppError } from '../middleware/errors.js';
 import { issueSession, type IssuedSession } from './sessions.js';
+// changePassword moved to ./password.ts; see there for the authenticated flow.
 
 const MAX_FAILED_LOGINS = 5;
 const LOCKOUT_DURATION_MS = 15 * 60 * 1000;
@@ -96,26 +97,3 @@ export async function login(input: LoginInput, ctx: LoginCtx = {}): Promise<Issu
   return result;
 }
 
-export async function changePassword(userId: string, currentPassword: string, newPassword: string, ctx: LoginCtx = {}): Promise<void> {
-  // Used by /v1/password/change in slice 4. Lives here because it shares the
-  // verify+rehash machinery with login.
-  const user = await prisma.user.findUnique({ where: { id: userId } });
-  if (!user) throw new AppError(404, 'not_found', 'user not found');
-
-  const ok = await verifyPassword(user.passwordHash, currentPassword);
-  if (!ok) {
-    await audit({ event: 'password.change.fail', userId, ...ctx });
-    throw new AppError(401, 'invalid_credentials', 'current password is incorrect');
-  }
-
-  await prisma.user.update({
-    where: { id: userId },
-    data: { passwordHash: await hashPassword(newPassword) },
-  });
-  // Revoke all existing sessions on password change.
-  await prisma.session.updateMany({
-    where: { userId, revokedAt: null },
-    data: { revokedAt: new Date() },
-  });
-  await audit({ event: 'password.change', userId, ...ctx });
-}

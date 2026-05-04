@@ -12,6 +12,7 @@ import { jwks } from '../crypto/signing.js';
 import { env } from '../infra/env.js';
 import { registerUser, verifyEmail, resendVerification } from '../domain/users.js';
 import { login } from '../domain/login.js';
+import { forgotPassword, resetPassword, changePassword } from '../domain/password.js';
 import {
   rotateSession,
   revokeSessionByToken,
@@ -151,10 +152,52 @@ export async function registerRoutes(app: AppInstance) {
     },
   });
 
-  // --- Password ---  (slice 4)
-  r.post('/v1/password/forgot', async () => { throw new Error('TODO'); });
-  r.post('/v1/password/reset', async () => { throw new Error('TODO'); });
-  r.post('/v1/password/change', { preHandler: [requireUser] }, async () => { throw new Error('TODO'); });
+  // --- Password ---
+
+  const forgotBody = z.object({ email: emailSchema });
+  r.route({
+    method: 'POST',
+    url: '/v1/password/forgot',
+    schema: { body: forgotBody },
+    handler: async (req, reply) => {
+      const { email } = req.body as z.infer<typeof forgotBody>;
+      await forgotPassword(email, ctxFrom(req));
+      // Always 202 — no enumeration.
+      return reply.code(202).send({ status: 'queued' });
+    },
+  });
+
+  const resetBody = z.object({
+    token: z.string().min(1).max(512),
+    new_password: passwordSchema,
+  });
+  r.route({
+    method: 'POST',
+    url: '/v1/password/reset',
+    schema: { body: resetBody },
+    handler: async (req, reply) => {
+      const { token, new_password } = req.body as z.infer<typeof resetBody>;
+      await resetPassword(token, new_password, ctxFrom(req));
+      return reply.code(200).send({ status: 'reset' });
+    },
+  });
+
+  const changeBody = z.object({
+    current_password: z.string().min(1).max(256),
+    new_password: passwordSchema,
+  });
+  r.route({
+    method: 'POST',
+    url: '/v1/password/change',
+    preHandler: [requireUser],
+    schema: { body: changeBody },
+    handler: async (req, reply) => {
+      const me = currentUser(req);
+      const { current_password, new_password } = req.body as z.infer<typeof changeBody>;
+      await changePassword(me.id, current_password, new_password, ctxFrom(req));
+      return reply.code(204).send();
+    },
+  });
 
   // --- Current user ---
   r.route({
