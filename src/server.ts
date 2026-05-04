@@ -1,29 +1,62 @@
 import Fastify from 'fastify';
+import helmet from '@fastify/helmet';
+import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
+import {
+  serializerCompiler,
+  validatorCompiler,
+  type ZodTypeProvider,
+} from 'fastify-type-provider-zod';
+import { ZodError } from 'zod';
 import { registerRoutes } from './routes/index.js';
+import { AppError } from './middleware/errors.js';
 
-export function buildServer() {
+export async function buildServer() {
   const app = Fastify({
     logger: { level: process.env.LOG_LEVEL ?? 'info' },
     trustProxy: true,
+  }).withTypeProvider<ZodTypeProvider>();
+
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+
+  await app.register(helmet, { contentSecurityPolicy: false });
+  await app.register(cors, {
+    origin: (process.env.CORS_ALLOW_ORIGINS ?? '').split(',').filter(Boolean),
+    credentials: true,
+  });
+  await app.register(rateLimit, {
+    global: false,
+    max: 60,
+    timeWindow: '1 minute',
   });
 
-  // TODO: register plugins
-  //   - @fastify/helmet
-  //   - @fastify/cors          (allowlist)
-  //   - @fastify/rate-limit    (Redis store; tighter limits on /login, /register, /password/*)
-  //   - fastify-type-provider-zod
-  //   - audit-log plugin
-  //   - prisma plugin
+  app.setErrorHandler((err, _req, reply) => {
+    if (err instanceof AppError) {
+      return reply.code(err.statusCode).send({ code: err.code, message: err.message });
+    }
+    if (err instanceof ZodError) {
+      return reply.code(400).send({ code: 'invalid_request', issues: err.issues });
+    }
+    const validation = (err as { validation?: unknown }).validation;
+    if (validation) {
+      return reply.code(400).send({ code: 'invalid_request', issues: validation });
+    }
+    reply.log.error({ err }, 'unhandled error');
+    return reply.code(500).send({ code: 'internal_error', message: 'internal error' });
+  });
 
-  registerRoutes(app);
+  await registerRoutes(app);
   return app;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const app = buildServer();
   const port = Number(process.env.PORT ?? 8080);
-  app.listen({ port, host: '0.0.0.0' }).catch((err) => {
-    app.log.error(err);
-    process.exit(1);
-  });
+  buildServer()
+    .then((app) => app.listen({ port, host: '0.0.0.0' }))
+    .catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error(err);
+      process.exit(1);
+    });
 }
