@@ -1,4 +1,6 @@
 import type { FastifyInstance } from 'fastify';
+import { jwks } from '../crypto/signing.js';
+import { env } from '../infra/env.js';
 
 // MVP route map. Handlers are stubs — wire them up incrementally.
 // Conventions:
@@ -43,8 +45,20 @@ export async function registerRoutes(app: FastifyInstance) {
 
 // ---- Stub handlers (to be implemented) ----
 
-async function jwksHandler() { return { keys: [] }; }
-async function oidcDiscoveryHandler() { return {}; }
+async function jwksHandler() {
+  return jwks();
+}
+
+async function oidcDiscoveryHandler() {
+  const e = env();
+  return {
+    issuer: e.JWT_ISSUER,
+    jwks_uri: `${e.JWT_ISSUER.replace(/\/$/, '')}/.well-known/jwks.json`,
+    id_token_signing_alg_values_supported: ['EdDSA'],
+    response_types_supported: ['token'],
+    subject_types_supported: ['public'],
+  };
+}
 async function registerHandler()         { throw new Error('TODO'); }
 async function verifyEmailHandler()      { throw new Error('TODO'); }
 async function resendVerificationHandler(){ throw new Error('TODO'); }
