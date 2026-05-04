@@ -37,6 +37,24 @@ src/infra/             # db, redis, email client (TBD)
 src/crypto/            # argon2, jwt, key rotation (TBD)
 ```
 
+## API docs
+
+The service is described by an OpenAPI 3.1 spec generated from the live Zod
+schemas, so the docs cannot drift from the implementation.
+
+- **Interactive UI:** `GET /docs` — Swagger UI, lists every endpoint with
+  request/response schemas and a "Try it out" form.
+- **Raw spec:** `GET /docs/json` — OpenAPI 3.1 JSON.
+- **Dump to disk:** `npm run openapi:dump` writes `./openapi.json` (20 paths).
+  Pass `-- --out=path/to/file.json` to override the location. The file is
+  gitignored; regenerate as needed (e.g. as a CI artifact, or to feed
+  `openapi-typescript` / `openapi-generator` for typed clients).
+- **Discovery:** `GET /.well-known/jwks.json` and
+  `GET /.well-known/openid-configuration` for JWT-verifying consumers.
+
+There is intentionally no hand-written SDK — generate clients from the spec
+when a second consumer needs one.
+
 ## Local dev
 ```
 cp .env.example .env
