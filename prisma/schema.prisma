@@ -143,6 +143,24 @@ model SigningKey {
   @@index([status])
 }
 
+// ---------- Service-to-service clients ----------
+// Each row is one calling service (HR, Meeting, Meetingbot, ...).
+// clientSecret is hashed at rest with Argon2id; the plaintext is shown
+// once on creation, never persisted.
+
+model ServiceClient {
+  id               String    @id @default(uuid()) @db.Uuid
+  clientId         String    @unique
+  clientSecretHash String
+  name             String
+  scopes           String[]  @default([])
+  disabled         Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  lastUsedAt       DateTime?
+
+  @@index([disabled])
+}
+
 // ---------- Audit log ----------
 
 model AuditEvent {

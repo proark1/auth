@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:generate": "prisma generate"
+    "prisma:generate": "prisma generate",
+    "create-client": "tsx src/scripts/createClient.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",
