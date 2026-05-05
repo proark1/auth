@@ -539,38 +539,6 @@ export async function registerRoutes(app: AppInstance) {
     },
   });
 
-  // --- Service-to-service token (OAuth2 client_credentials) ---
-
-  const oauthTokenBody = z.object({
-    grant_type: z.literal('client_credentials'),
-    client_id: z.string().min(1).max(64),
-    client_secret: z.string().min(1).max(512),
-    scope: z.string().max(512).optional(), // space-separated, optional narrowing
-  });
-  r.route({
-    method: 'POST',
-    url: '/v1/oauth/token',
-    schema: { body: oauthTokenBody },
-    handler: async (req, reply) => {
-      const body = req.body as z.infer<typeof oauthTokenBody>;
-      const requestedScopes = body.scope ? body.scope.split(' ').filter(Boolean) : undefined;
-      const result = await issueClientCredentialsToken(
-        {
-          clientId: body.client_id,
-          clientSecret: body.client_secret,
-          ...(requestedScopes ? { requestedScopes } : {}),
-        },
-        ctxFrom(req),
-      );
-      return reply.code(200).send({
-        access_token: result.accessToken,
-        token_type: 'Bearer',
-        expires_in: result.expiresIn,
-        scope: result.scopes.join(' '),
-      });
-    },
-  });
-
   // --- Sessions ---
   const sessionItem = z.object({
     id: z.string().uuid(),
