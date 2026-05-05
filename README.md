@@ -42,18 +42,34 @@ src/crypto/            # argon2, jwt, key rotation (TBD)
 The service is described by an OpenAPI 3.1 spec generated from the live Zod
 schemas, so the docs cannot drift from the implementation.
 
+- **Walkthrough:** [`docs/usage.md`](docs/usage.md) — end-to-end `curl`
+  examples for every flow (register, login, MFA, refresh, password reset,
+  service-to-service tokens, sessions).
 - **Interactive UI:** `GET /docs` — Swagger UI, lists every endpoint with
   request/response schemas and a "Try it out" form.
-- **Raw spec:** `GET /docs/json` — OpenAPI 3.1 JSON.
-- **Dump to disk:** `npm run openapi:dump` writes `./openapi.json` (20 paths).
-  Pass `-- --out=path/to/file.json` to override the location. The file is
-  gitignored; regenerate as needed (e.g. as a CI artifact, or to feed
-  `openapi-typescript` / `openapi-generator` for typed clients).
+- **Raw spec (live):** `GET /docs/json` — OpenAPI 3.1 JSON.
+- **Raw spec (committed):** [`openapi.json`](openapi.json) — committed to the
+  repo and verified up-to-date in CI. Feed it to `openapi-typescript`,
+  `openapi-generator`, etc. without running the service.
+- **Regenerate:** `npm run openapi:dump` rewrites `./openapi.json`. Pass
+  `-- --out=path/to/file.json` to override the location.
 - **Discovery:** `GET /.well-known/jwks.json` and
   `GET /.well-known/openid-configuration` for JWT-verifying consumers.
 
 There is intentionally no hand-written SDK — generate clients from the spec
 when a second consumer needs one.
+
+### MCP server
+
+For AI agents, every endpoint is also exposed as an MCP tool:
+
+```sh
+AUTH_API_BASE_URL=https://auth.example.com npm run mcp
+```
+
+The MCP server reads `openapi.json` at startup, so its tool list always
+matches the HTTP API. See [`docs/usage.md` § 9](docs/usage.md#9-mcp-server)
+for Claude Desktop / Cursor wiring.
 
 ## Local dev
 ```
