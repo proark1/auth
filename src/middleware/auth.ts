@@ -96,3 +96,25 @@ export function currentService(req: FastifyRequest): AuthedService {
   }
   return req.service;
 }
+
+// Like requireService, but lets the request through when no token is present
+// or the token is invalid. Used by endpoints that stay public (register,
+// password/forgot) but use an attached service identity for branding.
+export async function attachServiceIfPresent(req: FastifyRequest, _reply: FastifyReply): Promise<void> {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Bearer ')) return;
+  const token = auth.slice('Bearer '.length).trim();
+  if (!token) return;
+
+  try {
+    const claims = await verifyServiceToken(token);
+    if (claims.typ !== 'service') return;
+    req.service = {
+      clientId: claims.sub,
+      scopes: (claims.scope ?? '').split(' ').filter(Boolean),
+    };
+  } catch {
+    // Silent: this header may belong to a user token, or be malformed.
+    // Public endpoints don't reject; per-client branding just falls back.
+  }
+}

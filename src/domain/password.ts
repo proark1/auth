@@ -42,6 +42,7 @@ export async function forgotPassword(emailIn: string, ctx: RequestCtx = {}): Pro
     to: email,
     template: 'password_reset',
     vars: { link, token: plaintext, expires_hours: String(RESET_TOKEN_TTL_HOURS) },
+    clientId: user.registeredClientId,
   });
 
   await audit({ event: 'password.forgot', userId: user.id, ...ctx });

@@ -31,6 +31,12 @@ model User {
   failedLoginCount Int       @default(0)
   lockedUntil      DateTime?
 
+  // Which service the user originally registered through. Drives email
+  // branding (from address, subject) on verification and password-reset.
+  // Null = registered without a service token; emails fall back to global.
+  registeredClientId String?        @db.Uuid
+  registeredClient   ServiceClient? @relation(fields: [registeredClientId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -40,6 +46,7 @@ model User {
   auditEvents  AuditEvent[]
 
   @@index([status])
+  @@index([registeredClientId])
 }
 
 // ---------- Sessions / refresh tokens ----------
@@ -155,8 +162,18 @@ model ServiceClient {
   name             String
   scopes           String[]  @default([])
   disabled         Boolean   @default(false)
+
+  // Per-service email branding. Used when this client proxies a user-facing
+  // flow (register, password forgot) — the auth-service sends mail from the
+  // app's domain instead of the global noreply. Null => fall back to global.
+  fromAddress           String?
+  verifyEmailSubject    String?
+  passwordResetSubject  String?
+
   createdAt        DateTime  @default(now())
   lastUsedAt       DateTime?
+
+  registeredUsers  User[]
 
   @@index([disabled])
 }
