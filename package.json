@@ -3,7 +3,9 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p .",
@@ -12,12 +14,18 @@
     "test": "vitest run",
     "prisma:migrate": "prisma migrate dev",
     "prisma:generate": "prisma generate",
-    "create-client": "tsx src/scripts/createClient.ts"
+    "openapi:dump": "tsx src/scripts/dumpOpenapi.ts",
+    "create-client": "tsx src/scripts/createClient.ts",
+    "mcp": "tsx src/mcp/server.ts",
+    "mcp:start": "node dist/mcp/server.js"
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",
     "@fastify/helmet": "^13.0.2",
     "@fastify/rate-limit": "^10.3.0",
+    "@fastify/swagger": "^9.7.0",
+    "@fastify/swagger-ui": "^5.2.6",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@prisma/client": "^5.18.0",
     "@simplewebauthn/server": "^10.0.0",
     "argon2": "^0.40.3",
