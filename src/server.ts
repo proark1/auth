@@ -29,7 +29,7 @@ export async function buildServer() {
     credentials: true,
   });
   await app.register(rateLimit, {
-    global: false,
+    global: true,
     max: 60,
     timeWindow: '1 minute',
   });

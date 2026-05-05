@@ -100,10 +100,18 @@ async function resolveAttachedClientId(req: FastifyRequest): Promise<string | nu
 export async function registerRoutes(app: AppInstance) {
   const r = app;
 
+  // Per-route rate limits. Public, sensitive endpoints get stricter caps to
+  // blunt brute-force / enumeration. Discovery routes are uncapped (probed
+  // by infra). Everything else inherits the global default (60/min/IP).
+  const strict = { rateLimit: { max: 10, timeWindow: '1 minute' } };
+  const veryStrict = { rateLimit: { max: 5, timeWindow: '1 minute' } };
+  const uncapped = { rateLimit: false as const };
+
   // --- Public discovery ---
   r.route({
     method: 'GET',
     url: '/healthz',
+    config: uncapped,
     schema: {
       tags: ['discovery'],
       summary: 'Liveness probe',
@@ -117,6 +125,7 @@ export async function registerRoutes(app: AppInstance) {
   r.route({
     method: 'GET',
     url: '/.well-known/jwks.json',
+    config: uncapped,
     schema: {
       tags: ['discovery'],
       summary: 'JWKS for verifying issued JWTs',
@@ -132,6 +141,7 @@ export async function registerRoutes(app: AppInstance) {
   r.route({
     method: 'GET',
     url: '/.well-known/openid-configuration',
+    config: uncapped,
     schema: {
       tags: ['discovery'],
       summary: 'OpenID Connect discovery document',
@@ -164,6 +174,7 @@ export async function registerRoutes(app: AppInstance) {
     method: 'POST',
     url: '/v1/register',
     preHandler: [attachServiceIfPresent],
+    config: strict,
     schema: {
       tags: ['registration'],
       summary: 'Register a new account',
@@ -189,6 +200,7 @@ export async function registerRoutes(app: AppInstance) {
   r.route({
     method: 'POST',
     url: '/v1/email/verify',
+    config: strict,
     schema: {
       tags: ['registration'],
       summary: 'Verify email with token',
@@ -209,6 +221,7 @@ export async function registerRoutes(app: AppInstance) {
   r.route({
     method: 'POST',
     url: '/v1/email/verify/resend',
+    config: strict,
     schema: {
       tags: ['registration'],
       summary: 'Resend verification email',
@@ -235,6 +248,7 @@ export async function registerRoutes(app: AppInstance) {
   r.route({
     method: 'POST',
     url: '/v1/login',
+    config: veryStrict,
     schema: {
       tags: ['auth'],
       summary: 'Log in with email and password',
@@ -263,6 +277,7 @@ export async function registerRoutes(app: AppInstance) {
   r.route({
     method: 'POST',
     url: '/v1/login/mfa',
+    config: veryStrict,
     schema: {
       tags: ['auth', 'mfa'],
       summary: 'Complete login with TOTP code',
@@ -289,6 +304,7 @@ export async function registerRoutes(app: AppInstance) {
   r.route({
     method: 'POST',
     url: '/v1/token/refresh',
+    config: strict,
     schema: {
       tags: ['auth'],
       summary: 'Rotate refresh token, get a new access/refresh pair',
@@ -333,6 +349,7 @@ export async function registerRoutes(app: AppInstance) {
   r.route({
     method: 'POST',
     url: '/v1/password/forgot',
+    config: veryStrict,
     schema: {
       tags: ['password'],
       summary: 'Request a password reset link',
@@ -357,6 +374,7 @@ export async function registerRoutes(app: AppInstance) {
   r.route({
     method: 'POST',
     url: '/v1/password/reset',
+    config: strict,
     schema: {
       tags: ['password'],
       summary: 'Reset password using a reset token',
@@ -525,6 +543,7 @@ export async function registerRoutes(app: AppInstance) {
   r.route({
     method: 'POST',
     url: '/v1/oauth/token',
+    config: strict,
     schema: {
       tags: ['oauth'],
       summary: 'OAuth2 client_credentials token endpoint',
