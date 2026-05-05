@@ -14,6 +14,7 @@
     "test": "vitest run",
     "prisma:migrate": "prisma migrate dev",
     "prisma:generate": "prisma generate",
+    "openapi:dump": "tsx src/scripts/dumpOpenapi.ts",
     "create-client": "tsx src/scripts/createClient.ts"
   },
   "dependencies": {
