@@ -226,6 +226,47 @@ curl -sS -X POST $BASE/v1/oauth/token \
 The returned access token is a normal JWT. Verify it in your service against
 `/.well-known/jwks.json` — no callback to this service required.
 
+### Per-app email branding
+
+By default, `verify_email` and `password_reset` emails are sent from the
+global `EMAIL_SERVICE_FROM` with generic subjects. If a `ServiceClient` row
+has any of `fromAddress`, `verifyEmailSubject`, `passwordResetSubject` set,
+those values are used instead — but only for users who registered through
+that client.
+
+To "register through" a client, the client's backend forwards the user's
+register call with its own service-to-service access token attached:
+
+```sh
+# 1. Service gets a token (as above)
+SERVICE_TOKEN=$(curl -sS -X POST $BASE/v1/oauth/token \
+  -H 'content-type: application/json' \
+  -d '{"grant_type":"client_credentials","client_id":"hr-bot","client_secret":"…"}' \
+  | jq -r .access_token)
+
+# 2. Service proxies the user's registration with the token
+curl -sS -X POST $BASE/v1/register \
+  -H "authorization: Bearer $SERVICE_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"email":"alice@example.com","password":"…"}'
+```
+
+The `client_id` is read from the token's claims, never from the request body
+— a malicious caller cannot impersonate another service's `From` address
+without that service's `client_secret`.
+
+Subsequent emails for that user (verification resends, password resets) are
+automatically branded from the same client because `User.registeredClientId`
+was recorded on registration.
+
+If no service token is attached, register still works and falls back to
+global defaults — existing public callers are unaffected.
+
+To configure branding, set `fromAddress`, `verifyEmailSubject`, and/or
+`passwordResetSubject` directly on the `ServiceClient` row (any null field
+falls back to the global default). Sender domains must be verified in
+mailnowapi separately.
+
 ---
 
 ## 6. Discovery (for verifying services)

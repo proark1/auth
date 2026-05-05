@@ -21,7 +21,7 @@ import {
   revokeSessionById,
   listSessions,
 } from '../domain/sessions.js';
-import { requireUser, currentUser } from '../middleware/auth.js';
+import { requireUser, currentUser, attachServiceIfPresent } from '../middleware/auth.js';
 import { prisma } from '../infra/db.js';
 import { AppError } from '../middleware/errors.js';
 
@@ -84,6 +84,17 @@ const authedNoContentResponses = {
 
 function ctxFrom(req: FastifyRequest) {
   return { ip: req.ip, userAgent: req.headers['user-agent'] };
+}
+
+// Resolve ServiceClient.id (uuid PK) from the s2s token's client_id (string).
+// Returns null if no service token attached or the client no longer exists.
+async function resolveAttachedClientId(req: FastifyRequest): Promise<string | null> {
+  if (!req.service) return null;
+  const row = await prisma.serviceClient.findUnique({
+    where: { clientId: req.service.clientId },
+    select: { id: true },
+  });
+  return row?.id ?? null;
 }
 
 export async function registerRoutes(app: AppInstance) {
@@ -152,11 +163,14 @@ export async function registerRoutes(app: AppInstance) {
   r.route({
     method: 'POST',
     url: '/v1/register',
+    preHandler: [attachServiceIfPresent],
     schema: {
       tags: ['registration'],
       summary: 'Register a new account',
       description:
-        'Always returns 202 regardless of whether the email is already registered, to prevent enumeration.',
+        'Always returns 202 regardless of whether the email is already registered, to prevent enumeration. ' +
+        'If called with a valid service-to-service access token, the user is associated with that service ' +
+        'and verification/password emails will use the service\'s configured From address and subject.',
       body: registerBody,
       response: {
         202: z.object({ status: z.literal('pending_verification') }),
@@ -164,7 +178,9 @@ export async function registerRoutes(app: AppInstance) {
       },
     },
     handler: async (req, reply) => {
-      await registerUser(req.body as z.infer<typeof registerBody>, ctxFrom(req));
+      const body = req.body as z.infer<typeof registerBody>;
+      const registeredClientId = await resolveAttachedClientId(req);
+      await registerUser({ ...body, registeredClientId }, ctxFrom(req));
       return reply.code(202).send({ status: 'pending_verification' as const });
     },
   });

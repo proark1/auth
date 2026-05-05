@@ -18,18 +18,23 @@ interface RequestCtx {
 export interface RegisterInput {
   email: string;
   password: string;
+  // ServiceClient.id of the app proxying this registration. Determines
+  // email branding (from address, subject) for verification + future
+  // password resets. Resolved server-side from the caller's s2s token.
+  registeredClientId?: string | null;
 }
 
 // Always returns 202-shaped result. We never reveal whether the email existed
 // (user-enumeration protection).
 export async function registerUser(input: RegisterInput, ctx: RequestCtx = {}): Promise<void> {
   const email = input.email.toLowerCase().trim();
+  const registeredClientId = input.registeredClientId ?? null;
 
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
     // Don't tell the caller. If unverified, send a fresh verification email.
     if (!existing.emailVerifiedAt) {
-      await issueVerificationEmail(existing.id, email);
+      await issueVerificationEmail(existing.id, email, existing.registeredClientId);
     }
     await audit({ event: 'user.register.duplicate', userId: existing.id, ...ctx });
     return;
@@ -37,10 +42,10 @@ export async function registerUser(input: RegisterInput, ctx: RequestCtx = {}): 
 
   const passwordHash = await hashPassword(input.password);
   const user = await prisma.user.create({
-    data: { email, passwordHash, status: 'PENDING' },
+    data: { email, passwordHash, status: 'PENDING', registeredClientId },
   });
 
-  await issueVerificationEmail(user.id, email);
+  await issueVerificationEmail(user.id, email, registeredClientId);
   await audit({ event: 'user.registered', userId: user.id, ...ctx });
 }
 
@@ -77,13 +82,17 @@ export async function resendVerification(emailIn: string, ctx: RequestCtx = {}):
     return;
   }
 
-  await issueVerificationEmail(user.id, email);
+  await issueVerificationEmail(user.id, email, user.registeredClientId);
   await audit({ event: 'user.verification.resend', userId: user.id, ...ctx });
 }
 
 // ---------- shared ----------
 
-async function issueVerificationEmail(userId: string, email: string): Promise<void> {
+async function issueVerificationEmail(
+  userId: string,
+  email: string,
+  registeredClientId: string | null,
+): Promise<void> {
   // Invalidate prior unused verify tokens so only the latest works.
   await prisma.emailToken.updateMany({
     where: { userId, type: 'VERIFY_EMAIL', usedAt: null },
@@ -102,5 +111,6 @@ async function issueVerificationEmail(userId: string, email: string): Promise<vo
     to: email,
     template: 'verify_email',
     vars: { link, token: plaintext, expires_hours: String(VERIFY_TOKEN_TTL_HOURS) },
+    clientId: registeredClientId,
   });
 }
