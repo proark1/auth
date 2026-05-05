@@ -19,6 +19,9 @@ const schema = z.object({
 
   EMAIL_SERVICE_URL: z.string().url().optional(),
   EMAIL_SERVICE_TOKEN: z.string().optional(),
+  EMAIL_SERVICE_FROM: z.string().email().optional(),
+  VERIFY_EMAIL_TEMPLATE_ID: z.string().uuid().optional(),
+  PASSWORD_RESET_TEMPLATE_ID: z.string().uuid().optional(),
 });
 
 export type Env = z.infer<typeof schema>;
