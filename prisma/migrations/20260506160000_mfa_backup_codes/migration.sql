@@ -1,5 +1,11 @@
 -- MFA backup codes. One row per single-use recovery code; codes are stored
--- as sha256 hex (codeHash) so a DB read alone can't be replayed.
+-- as peppered HMAC-SHA256 hex (codeHash) so a DB read alone can't be replayed
+-- (see src/crypto/backupCodes.ts).
+--
+-- Uniqueness is per-user (userId, codeHash) rather than global: at 50 bits of
+-- entropy a global unique would eventually collide for unrelated users and
+-- surface as a 500 on regenerate. The composite index also covers user
+-- lookups during consumeBackupCode().
 
 -- CreateTable
 CREATE TABLE "MfaBackupCode" (
@@ -13,10 +19,7 @@ CREATE TABLE "MfaBackupCode" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "MfaBackupCode_codeHash_key" ON "MfaBackupCode"("codeHash");
-
--- CreateIndex
-CREATE INDEX "MfaBackupCode_userId_idx" ON "MfaBackupCode"("userId");
+CREATE UNIQUE INDEX "MfaBackupCode_userId_codeHash_key" ON "MfaBackupCode"("userId", "codeHash");
 
 -- AddForeignKey
 ALTER TABLE "MfaBackupCode"

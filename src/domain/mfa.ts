@@ -110,6 +110,7 @@ interface MfaChallengeUser {
   id: string;
   email: string;
   emailVerifiedAt: Date | null;
+  role: import('@prisma/client').Role;
 }
 
 // Shared preamble for both TOTP and backup-code completion paths: validate the
@@ -136,7 +137,12 @@ async function resolveMfaChallenge(
     await audit({ event: 'login.mfa.fail.locked', userId, ...ctx });
     throw new AppError(423, 'account_locked', 'account temporarily locked, try again later');
   }
-  return { id: user.id, email: user.email, emailVerifiedAt: user.emailVerifiedAt };
+  return {
+    id: user.id,
+    email: user.email,
+    emailVerifiedAt: user.emailVerifiedAt,
+    role: user.role,
+  };
 }
 
 // Atomic-increment failed counter and lock the account on threshold. Mirrors
@@ -270,6 +276,7 @@ export async function completeMfaLoginWithBackupCode(
     userId: user.id,
     email: user.email,
     emailVerified: !!user.emailVerifiedAt,
+    role: user.role,
     ip: input.ip,
     userAgent: input.userAgent,
   });

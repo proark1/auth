@@ -1,13 +1,26 @@
-import { describe, it, expect } from 'vitest';
-import {
-  generateBackupCode,
-  generateBackupCodes,
-  canonicalizeBackupCode,
-  hashBackupCode,
-  BACKUP_CODE_BATCH_SIZE,
-} from '../src/crypto/backupCodes.js';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { randomBytes } from 'node:crypto';
 
-describe('backupCodes', () => {
+beforeAll(() => {
+  // env() reads APP_ENCRYPTION_KEY to derive the HMAC pepper used by
+  // hashBackupCode. Other env vars are required by zod schema parsing.
+  process.env.APP_ENCRYPTION_KEY = randomBytes(32).toString('base64');
+  process.env.DATABASE_URL = 'postgresql://x/x';
+  process.env.REDIS_URL = 'redis://x';
+  process.env.JWT_ISSUER = 'https://auth.test';
+  process.env.JWT_AUDIENCE = 'test';
+  process.env.WEB_BASE_URL = 'https://app.test';
+});
+
+describe('backupCodes', async () => {
+  const {
+    generateBackupCode,
+    generateBackupCodes,
+    canonicalizeBackupCode,
+    hashBackupCode,
+    BACKUP_CODE_BATCH_SIZE,
+  } = await import('../src/crypto/backupCodes.js');
+
   it('generates codes in XXXXX-XXXXX format from the safe alphabet', () => {
     const code = generateBackupCode();
     expect(code).toMatch(/^[A-HJ-KM-NP-Z2-9]{5}-[A-HJ-KM-NP-Z2-9]{5}$/);

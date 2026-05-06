@@ -15,12 +15,27 @@ interface RequestCtx {
 // Generate a fresh batch and atomically replace any existing codes.
 // Plaintext codes are returned exactly once — the caller must show them
 // to the user and forget them.
+//
+// Requires the user to have at least one *confirmed* MFA factor: backup codes
+// only mean something as a fallback for an enrolled MFA. Asking for them
+// before enrollment would create dangling rows that recover... nothing.
 export async function regenerateBackupCodes(
   userId: string,
   ctx: RequestCtx = {},
 ): Promise<string[]> {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw new AppError(404, 'not_found', 'user not found');
+
+  const enrolledCount = await prisma.mfaFactor.count({
+    where: { userId, confirmedAt: { not: null } },
+  });
+  if (enrolledCount === 0) {
+    throw new AppError(
+      400,
+      'mfa_not_enrolled',
+      'enroll an MFA factor before generating backup codes',
+    );
+  }
 
   const codes = generateBackupCodes(BACKUP_CODE_BATCH_SIZE);
   const rows = codes.map((code) => ({ userId, codeHash: hashBackupCode(code) }));
