@@ -11,14 +11,18 @@ interface HeaderProps {
 }
 
 export function DashboardHeader({ email, isAdmin, area }: HeaderProps) {
+  // Belt-and-suspenders: every admin-flavored UI bit checks `isAdmin` even
+  // though the /admin layout's requireAdminSession() should already prevent a
+  // non-admin from ever reaching here.
+  const inAdmin = isAdmin && area === 'admin';
   const showAdminLink = isAdmin && area === 'dashboard';
-  const showAccountLink = area === 'admin';
+  const showAccountLink = inAdmin;
   return (
     <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/80 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-4 px-6">
-        <Link href={area === 'admin' ? '/admin' : '/dashboard'} className="text-sm font-semibold text-brand">
+        <Link href={inAdmin ? '/admin' : '/dashboard'} className="text-sm font-semibold text-brand">
           myauthservice
-          {area === 'admin' && (
+          {inAdmin && (
             <span className="ml-2 rounded bg-brand px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white">
               admin
             </span>
