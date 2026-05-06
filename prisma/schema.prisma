@@ -210,6 +210,35 @@ model ServiceClient {
   @@index([disabled])
 }
 
+// ---------- Pending email queue ----------
+//
+// When the upstream mailer is unavailable, sendEmail persists the message
+// here and returns success to the caller — register/login/etc. shouldn't
+// fail on a transient mailer outage. A retry worker (src/infra/emailWorker.ts)
+// drains rows whose nextAttemptAt has passed.
+
+model PendingEmail {
+  id            String     @id @default(uuid()) @db.Uuid
+  recipient     String     // raw email address quoted to recipient
+  template      String     // 'verify_email' | 'password_reset' | …
+  // Template variables (link, token, etc). Treat as sensitive — these
+  // payloads contain reset/verify tokens. Cleared by the retention sweep on
+  // permanent failure or after sentAt + grace period.
+  vars          Json
+  clientId      String?    @db.Uuid
+
+  attempts      Int        @default(0)
+  lastError     String?
+  nextAttemptAt DateTime   @default(now())
+  sentAt        DateTime?
+  failedAt      DateTime?
+
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([sentAt, nextAttemptAt])
+}
+
 // ---------- Audit log ----------
 
 model AuditEvent {

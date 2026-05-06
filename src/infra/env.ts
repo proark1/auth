@@ -45,6 +45,14 @@ const schema = z.object({
     .transform((v) => v?.toLowerCase() === 'true' || v === '1'),
   HIBP_THRESHOLD: z.coerce.number().int().min(1).default(1),
   HIBP_TIMEOUT_MS: z.coerce.number().int().min(100).default(2000),
+
+  // Email retry worker. When enabled, the API process drains the
+  // PendingEmail queue on a timer. Off in test/CI; on in any deployment.
+  EMAIL_WORKER_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v?.toLowerCase() === 'true' || v === '1'),
+  EMAIL_WORKER_POLL_MS: z.coerce.number().int().min(1000).default(15_000),
 });
 
 export type Env = z.infer<typeof schema>;

@@ -13,6 +13,7 @@ import {
 import { ZodError } from 'zod';
 import { registerRoutes } from './routes/index.js';
 import { AppError } from './middleware/errors.js';
+import { startEmailWorker } from './infra/emailWorker.js';
 
 export async function buildServer() {
   // trustProxy: how many proxy hops to honor for X-Forwarded-* (rate-limit IP,
@@ -119,7 +120,13 @@ export async function buildServer() {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const port = Number(process.env.PORT ?? 8080);
   buildServer()
-    .then((app) => app.listen({ port, host: '0.0.0.0' }))
+    .then(async (app) => {
+      await app.listen({ port, host: '0.0.0.0' });
+      // Start the email-retry worker only in real server mode — never under
+      // tests / dump-openapi where buildServer is invoked just to get the
+      // app object. EMAIL_WORKER_ENABLED gates this in env too.
+      startEmailWorker();
+    })
     .catch((err) => {
       // eslint-disable-next-line no-console
       console.error(err);
