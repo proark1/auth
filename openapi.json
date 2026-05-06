@@ -775,7 +775,6 @@
         }
       }
     },
-<<<<<<< HEAD
     "/v1/login/mfa/recovery": {
       "post": {
         "summary": "Complete login with an MFA backup (recovery) code",
@@ -783,15 +782,6 @@
           "auth",
           "mfa"
         ],
-=======
-    "/v1/login/magic/request": {
-      "post": {
-        "summary": "Request a one-shot magic-link sign-in email",
-        "tags": [
-          "auth"
-        ],
-        "description": "Always returns 202 to prevent enumeration.",
->>>>>>> d9ca133 (Add magic-link (passwordless) login)
         "requestBody": {
           "required": true,
           "content": {
@@ -799,7 +789,6 @@
               "schema": {
                 "type": "object",
                 "properties": {
-<<<<<<< HEAD
                   "mfa_token": {
                     "type": "string",
                     "minLength": 1,
@@ -814,35 +803,19 @@
                 "required": [
                   "mfa_token",
                   "backup_code"
-=======
-                  "email": {
-                    "type": "string",
-                    "maxLength": 254,
-                    "format": "email",
-                    "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
-                  }
-                },
-                "required": [
-                  "email"
->>>>>>> d9ca133 (Add magic-link (passwordless) login)
                 ]
               }
             }
           }
         },
         "responses": {
-<<<<<<< HEAD
           "200": {
-=======
-          "202": {
->>>>>>> d9ca133 (Add magic-link (passwordless) login)
             "description": "Default Response",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
-<<<<<<< HEAD
                     "access_token": {
                       "type": "string"
                     },
@@ -872,17 +845,6 @@
                     "token_type",
                     "expires_in",
                     "refresh_token_expires_at"
-=======
-                    "status": {
-                      "type": "string",
-                      "enum": [
-                        "queued"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "status"
->>>>>>> d9ca133 (Add magic-link (passwordless) login)
                   ],
                   "additionalProperties": false
                 }
@@ -914,10 +876,112 @@
                 }
               }
             }
-<<<<<<< HEAD
           },
           "401": {
-=======
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {}
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/login/magic/request": {
+      "post": {
+        "summary": "Request a one-shot magic-link sign-in email",
+        "tags": [
+          "auth"
+        ],
+        "description": "Always returns 202 to prevent enumeration.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "format": "email",
+                    "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                  }
+                },
+                "required": [
+                  "email"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "queued"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {}
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
           }
         }
       }
@@ -1015,7 +1079,6 @@
             }
           },
           "400": {
->>>>>>> d9ca133 (Add magic-link (passwordless) login)
             "description": "Default Response",
             "content": {
               "application/json": {

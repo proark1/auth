@@ -85,31 +85,45 @@ export async function verifyMagicLink(
   const tokenHash = hashToken(token);
   const invalid = new AppError(400, 'invalid_token', 'token is invalid or expired');
 
-  // Atomic claim: updateMany scoped to (tokenHash, type, unused, unexpired)
-  // marks the token used in a single statement so two parallel verifies
-  // can't both succeed on one token.
-  const claimed = await prisma.emailToken.updateMany({
-    where: {
-      tokenHash,
-      type: 'LOGIN_MAGIC_LINK',
-      usedAt: null,
-      expiresAt: { gt: new Date() },
-    },
-    data: { usedAt: new Date() },
+  // Single read: token + owner. Done before consumption so a locked user
+  // doesn't lose their (still valid, still-unconsumed) magic link to a
+  // 423 response — they can re-click once the lockout passes.
+  const row = await prisma.emailToken.findUnique({
+    where: { tokenHash },
+    include: { user: true },
   });
-  if (claimed.count !== 1) throw invalid;
-
-  // Re-fetch to get the userId; the returning row was claimed atomically.
-  const row = await prisma.emailToken.findUnique({ where: { tokenHash } });
-  if (!row) throw invalid;
-
-  const user = await prisma.user.findUnique({ where: { id: row.userId } });
-  if (!user || user.status !== 'ACTIVE') throw invalid;
+  if (
+    !row ||
+    row.type !== 'LOGIN_MAGIC_LINK' ||
+    row.usedAt !== null ||
+    row.expiresAt <= new Date() ||
+    row.user.status !== 'ACTIVE'
+  ) {
+    throw invalid;
+  }
+  const user = row.user;
 
   if (user.lockedUntil && user.lockedUntil > new Date()) {
     await audit({ event: 'login.magic_link.fail.locked', userId: user.id, ...ctx });
     throw new AppError(423, 'account_locked', 'account temporarily locked, try again later');
   }
+
+  // Atomic claim now: scoped to (tokenHash, unused) so two parallel verifies
+  // can't both succeed. Re-checks usedAt because TOCTOU between the read
+  // above and this update is otherwise possible.
+  const claimed = await prisma.emailToken.updateMany({
+    where: { tokenHash, usedAt: null },
+    data: { usedAt: new Date() },
+  });
+  if (claimed.count !== 1) throw invalid;
+
+  // First factor verified — clear any prior failed-login state up front.
+  // Mirrors login.ts's password-success path so a user who finishes the
+  // first factor isn't immediately re-locked by a slip on TOTP.
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { failedLoginCount: 0, lockedUntil: null },
+  });
 
   if (await userHasConfirmedMfa(user.id)) {
     const mfaToken = await issueMfaChallenge(user.id);
@@ -117,17 +131,11 @@ export async function verifyMagicLink(
     return { kind: 'mfa_required', mfaToken };
   }
 
-  // Successful first-and-only factor — clear any prior failed-login state and
-  // issue a normal session. Same end shape as /v1/login.
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { failedLoginCount: 0, lockedUntil: null },
-  });
-
   const sessionInput: IssueSessionInput = {
     userId: user.id,
     email: user.email,
     emailVerified: !!user.emailVerifiedAt,
+    role: user.role,
   };
   if (ctx.ip !== undefined) sessionInput.ip = ctx.ip;
   if (ctx.userAgent !== undefined) sessionInput.userAgent = ctx.userAgent;
