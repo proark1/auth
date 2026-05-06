@@ -1,3 +1,4 @@
+import type { Role } from '@prisma/client';
 import { prisma } from '../infra/db.js';
 import { generateToken, hashToken } from '../crypto/tokens.js';
 import { issueAccessToken } from '../crypto/signing.js';
@@ -9,8 +10,13 @@ export interface IssueSessionInput {
   userId: string;
   email: string;
   emailVerified: boolean;
+  role: Role;
   ip?: string | undefined;
   userAgent?: string | undefined;
+}
+
+function rolesClaim(role: Role): string[] {
+  return role === 'ADMIN' ? ['admin'] : [];
 }
 
 export interface IssuedSession {
@@ -41,6 +47,7 @@ export async function issueSession(input: IssueSessionInput): Promise<IssuedSess
     sub: input.userId,
     email: input.email,
     emailVerified: input.emailVerified,
+    roles: rolesClaim(input.role),
   });
 
   return { accessToken, refreshToken, refreshTokenExpiresAt: expiresAt, sessionId: session.id };
@@ -81,6 +88,7 @@ export async function rotateSession(refreshTokenPlain: string, ctx: RotateCtx = 
     userId: user.id,
     email: user.email,
     emailVerified: !!user.emailVerifiedAt,
+    role: user.role,
     ip: ctx.ip,
     userAgent: ctx.userAgent,
   });

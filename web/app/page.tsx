@@ -1,19 +1,22 @@
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
+import { getSession, type Session } from '@/lib/session';
 
-export default function LandingPage() {
+export default async function LandingPage() {
+  const session = await getSession();
   return (
     <main className="flex min-h-screen flex-col">
-      <Header />
-      <Hero />
+      <Header session={session} />
+      <Hero session={session} />
       <ValueProps />
-      <CallToAction />
+      <CallToAction session={session} />
       <Footer />
     </main>
   );
 }
 
-function Header() {
+function Header({ session }: { session: Session | null }) {
+  const dashboardHref = session?.isAdmin ? '/admin' : '/dashboard';
   return (
     <header className="border-b border-slate-200">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
@@ -21,23 +24,34 @@ function Header() {
           myauthservice
         </Link>
         <nav className="flex items-center gap-2">
-          <Link href="/login">
-            <Button variant="ghost" size="sm">
-              Log in
-            </Button>
-          </Link>
-          <Link href="/register">
-            <Button variant="accent" size="sm">
-              Get started
-            </Button>
-          </Link>
+          {session ? (
+            <Link href={dashboardHref}>
+              <Button variant="accent" size="sm">
+                Go to {session.isAdmin ? 'admin' : 'dashboard'}
+              </Button>
+            </Link>
+          ) : (
+            <>
+              <Link href="/login">
+                <Button variant="ghost" size="sm">
+                  Log in
+                </Button>
+              </Link>
+              <Link href="/register">
+                <Button variant="accent" size="sm">
+                  Get started
+                </Button>
+              </Link>
+            </>
+          )}
         </nav>
       </div>
     </header>
   );
 }
 
-function Hero() {
+function Hero({ session }: { session: Session | null }) {
+  const dashboardHref = session?.isAdmin ? '/admin' : '/dashboard';
   return (
     <section className="border-b border-slate-200">
       <div className="mx-auto grid max-w-6xl gap-12 px-6 py-24 md:grid-cols-2 md:items-center">
@@ -54,16 +68,26 @@ function Hero() {
             ten lines of code. Deploy once, brand it per app.
           </p>
           <div className="flex flex-wrap items-center gap-3">
-            <Link href="/register">
-              <Button variant="accent" size="lg">
-                Create your account
-              </Button>
-            </Link>
-            <Link href="/login">
-              <Button variant="outline" size="lg">
-                Log in
-              </Button>
-            </Link>
+            {session ? (
+              <Link href={dashboardHref}>
+                <Button variant="accent" size="lg">
+                  Go to {session.isAdmin ? 'admin' : 'dashboard'}
+                </Button>
+              </Link>
+            ) : (
+              <>
+                <Link href="/register">
+                  <Button variant="accent" size="lg">
+                    Create your account
+                  </Button>
+                </Link>
+                <Link href="/login">
+                  <Button variant="outline" size="lg">
+                    Log in
+                  </Button>
+                </Link>
+              </>
+            )}
           </div>
           <p className="text-sm text-slate-500">No credit card required. 60 seconds to first JWT.</p>
         </div>
@@ -120,7 +144,8 @@ function ValueProps() {
   );
 }
 
-function CallToAction() {
+function CallToAction({ session }: { session: Session | null }) {
+  const dashboardHref = session?.isAdmin ? '/admin' : '/dashboard';
   return (
     <section className="border-b border-slate-200">
       <div className="mx-auto flex max-w-6xl flex-col items-center gap-6 px-6 py-20 text-center">
@@ -131,9 +156,9 @@ function CallToAction() {
           Create your account, provision a service client, and start verifying tokens in your app
           today.
         </p>
-        <Link href="/register">
+        <Link href={session ? dashboardHref : '/register'}>
           <Button variant="accent" size="lg">
-            Create your account
+            {session ? `Go to ${session.isAdmin ? 'admin' : 'dashboard'}` : 'Create your account'}
           </Button>
         </Link>
       </div>

@@ -1,8 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useState, type FormEvent } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState, type FormEvent } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -22,7 +22,17 @@ type State =
   | { status: 'error'; message: string };
 
 export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const next = searchParams.get('next');
   const [state, setState] = useState<State>({ status: 'idle' });
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
@@ -32,13 +42,15 @@ export default function LoginPage() {
     const password = String(form.get('password') ?? '');
 
     setState({ status: 'submitting' });
-    const res = await fetch('/api/auth/login', {
+    const url = next ? `/api/auth/login?next=${encodeURIComponent(next)}` : '/api/auth/login';
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
     const body = (await res.json().catch(() => ({}))) as {
       ok?: boolean;
+      redirectTo?: string;
       mfa_required?: boolean;
       mfa_token?: string;
       message?: string;
@@ -50,7 +62,7 @@ export default function LoginPage() {
       return;
     }
     if (res.ok && body.ok) {
-      router.push('/');
+      router.push(body.redirectTo ?? '/dashboard');
       return;
     }
     setState({ status: 'error', message: body.message ?? body.code ?? 'Invalid credentials.' });

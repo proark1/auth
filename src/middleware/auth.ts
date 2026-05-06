@@ -7,6 +7,7 @@ export interface AuthedUser {
   email: string | undefined;
   emailVerified: boolean;
   roles: string[];
+  isAdmin: boolean;
   orgId: string | undefined;
 }
 
@@ -43,13 +44,23 @@ export async function requireUser(req: FastifyRequest, _reply: FastifyReply): Pr
     throw new AppError(401, 'unauthorized', 'wrong token type');
   }
 
+  const roles = claims.roles ?? [];
   req.user = {
     id: claims.sub,
     email: claims.email,
     emailVerified: claims.email_verified ?? false,
-    roles: claims.roles ?? [],
+    roles,
+    isAdmin: roles.includes('admin'),
     orgId: claims.org_id,
   };
+}
+
+// Runs requireUser, then rejects callers without the 'admin' role.
+export async function requireAdmin(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  await requireUser(req, reply);
+  if (!req.user?.isAdmin) {
+    throw new AppError(403, 'forbidden', 'admin only');
+  }
 }
 
 // Convenience accessor for handlers that ran behind requireUser. Throws if used
