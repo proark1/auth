@@ -1,6 +1,14 @@
 import { NextResponse } from 'next/server';
 import { auth, isMfaChallenge, ApiError } from '@/lib/api';
 import { refreshCookie, accessCookie } from '@/lib/cookies';
+import { decodeAccessToken, isAdmin } from '@/lib/jwt';
+
+// Only redirect to paths inside the app — refuse open-redirect attempts.
+function safeNext(next: string | null): string | null {
+  if (!next) return null;
+  if (!next.startsWith('/dashboard') && !next.startsWith('/admin')) return null;
+  return next;
+}
 
 export async function POST(req: Request): Promise<Response> {
   let body: { email?: string; password?: string };
@@ -14,6 +22,9 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ code: 'missing_fields' }, { status: 400 });
   }
 
+  const url = new URL(req.url);
+  const requestedNext = safeNext(url.searchParams.get('next'));
+
   try {
     const result = await auth.login(body.email, body.password);
 
@@ -23,7 +34,12 @@ export async function POST(req: Request): Promise<Response> {
       return NextResponse.json({ mfa_required: true, mfa_token: result.mfa_token });
     }
 
-    const res = NextResponse.json({ ok: true });
+    const claims = decodeAccessToken(result.access_token);
+    const admin = isAdmin(claims);
+    const fallback = admin ? '/admin' : '/dashboard';
+    const redirectTo = requestedNext ?? fallback;
+
+    const res = NextResponse.json({ ok: true, redirectTo });
     res.cookies.set(refreshCookie(result.refresh_token, new Date(result.refresh_token_expires_at)));
     res.cookies.set(accessCookie(result.access_token, result.expires_in));
     return res;

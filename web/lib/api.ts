@@ -62,6 +62,104 @@ export interface MfaChallenge {
 
 export type LoginResult = LoginTokens | MfaChallenge;
 
+// Shapes returned by the Fastify backend that dashboard pages render.
+// Centralising them here keeps server components free of inline `as` casts.
+
+export type UserStatus = 'PENDING' | 'ACTIVE' | 'DISABLED' | 'LOCKED';
+export type Role = 'USER' | 'ADMIN';
+
+export interface MeResponse {
+  id: string;
+  email: string;
+  email_verified: boolean;
+  status: UserStatus;
+  created_at: string;
+}
+
+export interface SessionItem {
+  id: string;
+  ip: string | null;
+  userAgent: string | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+  expiresAt: string;
+}
+
+export interface MfaFactor {
+  id: string;
+  type: 'TOTP' | 'WEBAUTHN';
+  label: string | null;
+  confirmedAt: string | null;
+  lastUsedAt: string | null;
+  createdAt: string;
+}
+
+export interface AdminStats {
+  users: { total: number; active: number; pending: number; disabled: number; locked: number; admins: number };
+  sessions: { active: number };
+  signups7d: number;
+  logins7d: number;
+  failedLogins24h: number;
+}
+
+export interface AdminUserListItem {
+  id: string;
+  email: string;
+  status: UserStatus;
+  role: Role;
+  emailVerified: boolean;
+  createdAt: string;
+}
+
+export interface AdminUserDetail extends AdminUserListItem {
+  registeredClient: { id: string; name: string } | null;
+  sessionCount: number;
+  mfaFactorCount: number;
+  recentEvents: Array<{
+    id: string;
+    event: string;
+    ip: string | null;
+    userAgent: string | null;
+    createdAt: string;
+  }>;
+}
+
+export interface AdminAuditEvent {
+  id: string;
+  userId: string | null;
+  event: string;
+  ip: string | null;
+  userAgent: string | null;
+  metadata: unknown;
+  createdAt: string;
+}
+
+export interface AdminClient {
+  id: string;
+  clientId: string;
+  name: string;
+  scopes: string[];
+  disabled: boolean;
+  fromAddress: string | null;
+  verifyEmailSubject: string | null;
+  passwordResetSubject: string | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
+export interface AdminCreatedClient extends AdminClient {
+  clientSecret: string;
+}
+
+export interface AdminSigningKey {
+  id: string;
+  kid: string;
+  alg: string;
+  status: 'ACTIVE' | 'RETIRING' | 'RETIRED';
+  createdAt: string;
+  retiredAt: string | null;
+}
+
 export const auth = {
   register: (email: string, password: string) =>
     apiFetch<{ status: 'pending_verification' }>('/v1/register', {

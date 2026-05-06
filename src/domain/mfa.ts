@@ -161,6 +161,7 @@ export async function completeMfaLogin(input: CompleteMfaInput): Promise<IssuedS
     userId,
     email: user.email,
     emailVerified: !!user.emailVerifiedAt,
+    role: user.role,
     ip: input.ip,
     userAgent: input.userAgent,
   });

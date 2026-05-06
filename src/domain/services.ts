@@ -14,10 +14,10 @@ interface RequestCtx {
 
 export interface CreateClientInput {
   name: string;
-  scopes?: string[];
-  fromAddress?: string;
-  verifyEmailSubject?: string;
-  passwordResetSubject?: string;
+  scopes?: string[] | undefined;
+  fromAddress?: string | undefined;
+  verifyEmailSubject?: string | undefined;
+  passwordResetSubject?: string | undefined;
 }
 
 export interface CreatedClient {

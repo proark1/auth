@@ -24,6 +24,7 @@ import {
 import { requireUser, currentUser, attachServiceIfPresent } from '../middleware/auth.js';
 import { prisma } from '../infra/db.js';
 import { AppError } from '../middleware/errors.js';
+import { registerAdminRoutes } from './admin.js';
 
 export type AppInstance = FastifyInstance<
   RawServerDefault,
@@ -452,6 +453,54 @@ export async function registerRoutes(app: AppInstance) {
 
   // --- MFA (TOTP) ---
 
+  const mfaFactorItem = z.object({
+    id: z.string().uuid(),
+    type: z.enum(['TOTP', 'WEBAUTHN']),
+    label: z.string().nullable(),
+    confirmedAt: z.string().datetime().nullable(),
+    lastUsedAt: z.string().datetime().nullable(),
+    createdAt: z.string().datetime(),
+  });
+  r.route({
+    method: 'GET',
+    url: '/v1/mfa',
+    preHandler: [requireUser],
+    schema: {
+      tags: ['mfa'],
+      summary: 'List the current user\'s MFA factors',
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: z.object({ factors: z.array(mfaFactorItem) }),
+        401: errorResponse,
+      },
+    },
+    handler: async (req) => {
+      const me = currentUser(req);
+      const rows = await prisma.mfaFactor.findMany({
+        where: { userId: me.id },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          type: true,
+          label: true,
+          confirmedAt: true,
+          lastUsedAt: true,
+          createdAt: true,
+        },
+      });
+      return {
+        factors: rows.map((f) => ({
+          id: f.id,
+          type: f.type,
+          label: f.label,
+          confirmedAt: f.confirmedAt ? f.confirmedAt.toISOString() : null,
+          lastUsedAt: f.lastUsedAt ? f.lastUsedAt.toISOString() : null,
+          createdAt: f.createdAt.toISOString(),
+        })),
+      };
+    },
+  });
+
   const totpSetupBody = z.object({ label: z.string().max(100).optional() });
   r.route({
     method: 'POST',
@@ -620,6 +669,8 @@ export async function registerRoutes(app: AppInstance) {
       return reply.code(204).send(null);
     },
   });
+
+  await registerAdminRoutes(r);
 }
 
 interface IssuedTokenLike {

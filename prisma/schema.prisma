@@ -21,12 +21,18 @@ enum UserStatus {
   LOCKED    // too many failed logins
 }
 
+enum Role {
+  USER
+  ADMIN  // global operator: can access /admin endpoints
+}
+
 model User {
   id              String     @id @default(uuid()) @db.Uuid
   email           String     @unique @db.Citext
   emailVerifiedAt DateTime?
   passwordHash    String     // argon2id encoded string (includes params + salt)
   status          UserStatus @default(PENDING)
+  role            Role       @default(USER)
 
   failedLoginCount Int       @default(0)
   lockedUntil      DateTime?
@@ -46,6 +52,7 @@ model User {
   auditEvents  AuditEvent[]
 
   @@index([status])
+  @@index([role])
   @@index([registeredClientId])
 }
 
