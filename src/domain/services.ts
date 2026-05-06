@@ -15,6 +15,9 @@ interface RequestCtx {
 export interface CreateClientInput {
   name: string;
   scopes?: string[];
+  fromAddress?: string;
+  verifyEmailSubject?: string;
+  passwordResetSubject?: string;
 }
 
 export interface CreatedClient {
@@ -23,6 +26,9 @@ export interface CreatedClient {
   clientSecret: string; // plaintext, returned once
   name: string;
   scopes: string[];
+  fromAddress: string | null;
+  verifyEmailSubject: string | null;
+  passwordResetSubject: string | null;
 }
 
 export async function createServiceClient(input: CreateClientInput): Promise<CreatedClient> {
@@ -37,6 +43,9 @@ export async function createServiceClient(input: CreateClientInput): Promise<Cre
       clientSecretHash: await hashPassword(clientSecret),
       name: input.name,
       scopes: input.scopes ?? [],
+      fromAddress: input.fromAddress ?? null,
+      verifyEmailSubject: input.verifyEmailSubject ?? null,
+      passwordResetSubject: input.passwordResetSubject ?? null,
     },
   });
 
@@ -48,6 +57,9 @@ export async function createServiceClient(input: CreateClientInput): Promise<Cre
     clientSecret,
     name: row.name,
     scopes: row.scopes,
+    fromAddress: row.fromAddress,
+    verifyEmailSubject: row.verifyEmailSubject,
+    passwordResetSubject: row.passwordResetSubject,
   };
 }
 
