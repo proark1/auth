@@ -18,7 +18,8 @@ export type EmailTemplate =
   | 'verify_email'
   | 'password_reset'
   | 'new_device_login'
-  | 'email_change';
+  | 'email_change'
+  | 'account_deletion';
 
 export interface SendEmailInput {
   to: string;
@@ -34,6 +35,7 @@ const SUBJECTS: Record<EmailTemplate, string> = {
   password_reset: 'Reset your password',
   new_device_login: 'New sign-in to your account',
   email_change: 'Confirm your new email address',
+  account_deletion: 'Confirm account deletion',
 };
 
 function templateIdFor(template: EmailTemplate): string | undefined {
@@ -47,6 +49,8 @@ function templateIdFor(template: EmailTemplate): string | undefined {
       return e.NEW_DEVICE_LOGIN_TEMPLATE_ID;
     case 'email_change':
       return e.EMAIL_CHANGE_TEMPLATE_ID;
+    case 'account_deletion':
+      return e.ACCOUNT_DELETION_TEMPLATE_ID;
   }
 }
 

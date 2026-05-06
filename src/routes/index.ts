@@ -24,6 +24,11 @@ import { regenerateBackupCodes, countUnusedBackupCodes } from '../domain/backupC
 import { requestEmailChange, confirmEmailChange } from '../domain/emailChange.js';
 import { issueClientCredentialsToken } from '../domain/services.js';
 import {
+  requestAccountDeletion,
+  confirmAccountDeletion,
+  exportUserData,
+} from '../domain/account.js';
+import {
   rotateSession,
   revokeSessionByToken,
   revokeSessionById,
@@ -605,6 +610,84 @@ export async function registerRoutes(app: AppInstance) {
         status: u.status,
         created_at: u.createdAt.toISOString(),
       };
+    },
+  });
+
+  // GDPR data export. Returns the entirety of what we hold for the caller as
+  // a single JSON blob — secrets are never included in plaintext (TOTP
+  // secret bytes, refresh-token hashes, password hash all elided), but every
+  // visible attribute, every session, every audit event, every token row is.
+  r.route({
+    method: 'GET',
+    url: '/v1/me/data',
+    preHandler: [requireUser],
+    schema: {
+      tags: ['me'],
+      summary: 'Export everything we hold about the current user (JSON)',
+      security: [{ bearerAuth: [] }],
+      // The shape is large and pretty-much all-optional in practice; surface
+      // it as `unknown` rather than re-declaring the export schema in two
+      // places. The OpenAPI is still useful as a discovery endpoint.
+      response: { 200: z.unknown(), 401: errorResponse, 404: errorResponse },
+    },
+    handler: async (req, reply) => {
+      const me = currentUser(req);
+      const data = await exportUserData(me.id);
+      // application/json is the default; set Content-Disposition so a curl
+      // -O actually saves a file with a sensible name.
+      reply.header('content-disposition', `attachment; filename="auth-export-${me.id}.json"`);
+      return data;
+    },
+  });
+
+  // Self-service account deletion. Two-step: re-auth + emailed confirm token,
+  // then hard delete on confirm. Mirrors password-reset / email-change.
+  const deleteRequestBody = z.object({ current_password: z.string().min(1).max(256) });
+  r.route({
+    method: 'POST',
+    url: '/v1/me/delete/request',
+    preHandler: [requireUser],
+    config: strict,
+    schema: {
+      tags: ['me'],
+      summary: 'Request account deletion (sends confirm link)',
+      security: [{ bearerAuth: [] }],
+      body: deleteRequestBody,
+      response: {
+        202: z.object({ status: z.literal('queued') }),
+        400: errorResponse,
+        401: errorResponse,
+      },
+    },
+    handler: async (req, reply) => {
+      const me = currentUser(req);
+      const body = req.body as z.infer<typeof deleteRequestBody>;
+      await requestAccountDeletion(me.id, body.current_password, ctxFrom(req));
+      return reply.code(202).send({ status: 'queued' as const });
+    },
+  });
+
+  const deleteConfirmBody = z.object({ token: z.string().min(1).max(512) });
+  r.route({
+    method: 'POST',
+    url: '/v1/me/delete/confirm',
+    config: strict,
+    schema: {
+      tags: ['me'],
+      summary: 'Confirm account deletion with the emailed token (irreversible)',
+      description:
+        'Hard-deletes the user. Cascades drop sessions, MFA factors, and pending '
+        + 'tokens. Audit events stay in the log with userId nulled.',
+      body: deleteConfirmBody,
+      response: {
+        200: z.object({ status: z.literal('deleted') }),
+        400: errorResponse,
+      },
+    },
+    handler: async (req, reply) => {
+      const { token } = req.body as z.infer<typeof deleteConfirmBody>;
+      await confirmAccountDeletion(token, ctxFrom(req));
+      return reply.code(200).send({ status: 'deleted' as const });
     },
   });
 
