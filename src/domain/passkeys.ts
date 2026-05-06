@@ -324,8 +324,11 @@ export async function verifyPasskeyLogin(
     userId,
     email: user.email,
     emailVerified: !!user.emailVerifiedAt,
-    ip: input.ip,
-    userAgent: input.userAgent,
+    // Conditional spread keeps `exactOptionalPropertyTypes` happy by omitting
+    // the keys entirely when the values are undefined, instead of passing
+    // explicit-undefined for an optional field.
+    ...(input.ip !== undefined ? { ip: input.ip } : {}),
+    ...(input.userAgent !== undefined ? { userAgent: input.userAgent } : {}),
   });
 
   await audit({
