@@ -33,7 +33,16 @@ async function apiFetch<T>(path: string, init: RequestInit): Promise<T> {
     cache: 'no-store',
   });
   const text = await res.text();
-  const body = text ? (JSON.parse(text) as unknown) : null;
+  // Upstream may return non-JSON (e.g. a 502 HTML page from a CDN). Don't
+  // crash the Route Handler — surface the raw text in the ApiError instead.
+  let body: unknown = null;
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = { code: 'upstream_non_json', message: text.slice(0, 200) };
+    }
+  }
   if (!res.ok) throw new ApiError(res.status, (body ?? {}) as ApiErrorBody);
   return body as T;
 }
@@ -82,6 +91,15 @@ export const auth = {
     apiFetch<{ status: 'reset' }>('/v1/password/reset', {
       method: 'POST',
       body: JSON.stringify({ token, new_password: newPassword }),
+    }),
+
+  // Revokes the server-side session for refreshToken. Returns 204 (null body).
+  // The API requires a valid user access token, so pass that through too.
+  logout: (accessToken: string, refreshToken: string) =>
+    apiFetch<null>('/v1/logout', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ refresh_token: refreshToken }),
     }),
 };
 

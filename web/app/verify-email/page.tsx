@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import {
@@ -25,9 +25,15 @@ function VerifyInner() {
   const [state, setState] = useState<State>(
     token ? { status: 'verifying' } : { status: 'missing_token' },
   );
+  // Verification tokens are single-use server-side. StrictMode runs effects
+  // twice in dev; without this guard the second call hits an already-used
+  // token and the UI flips from "verified" to "error".
+  const submitted = useRef(false);
 
   useEffect(() => {
     if (!token) return;
+    if (submitted.current) return;
+    submitted.current = true;
     void (async () => {
       const res = await fetch('/api/auth/verify', {
         method: 'POST',
