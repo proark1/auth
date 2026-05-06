@@ -19,8 +19,9 @@
 // its own audience to prevent cross-tenant token reuse. Falls back to the
 // global JWT_AUDIENCE if omitted.
 // --web-base-url is the public origin used when building links in outgoing
-// emails (verify-email, password reset). Falls back to global WEB_BASE_URL
-// if omitted.
+// emails (verify-email, password reset). Required: silently falling back to
+// the auth-service's own WEB_BASE_URL ships verification links for the wrong
+// domain to end users and is almost never what an integrator wants.
 
 import { createServiceClient } from '../domain/services.js';
 import { prisma } from '../infra/db.js';
@@ -28,11 +29,11 @@ import { prisma } from '../infra/db.js';
 interface Args {
   name: string;
   scopes: string[];
+  webBaseUrl: string;
   fromAddress?: string;
   verifyEmailSubject?: string;
   passwordResetSubject?: string;
   audience?: string;
-  webBaseUrl?: string;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -60,14 +61,26 @@ function parseArgs(argv: string[]): Args {
   if (!args.name) {
     throw new Error('--name is required, e.g. --name="HR Service"');
   }
+  if (!args.webBaseUrl) {
+    throw new Error(
+      '--web-base-url is required, e.g. --web-base-url="https://www.ourteammanagement.com" — ' +
+        'this is the origin used to build verify-email and password-reset links sent to ' +
+        "this client's users.",
+    );
+  }
+  try {
+    new URL(args.webBaseUrl);
+  } catch {
+    throw new Error(`--web-base-url must be a valid absolute URL, got: ${args.webBaseUrl}`);
+  }
   return {
     name: args.name,
     scopes: args.scopes ?? [],
+    webBaseUrl: args.webBaseUrl,
     ...(args.fromAddress ? { fromAddress: args.fromAddress } : {}),
     ...(args.verifyEmailSubject ? { verifyEmailSubject: args.verifyEmailSubject } : {}),
     ...(args.passwordResetSubject ? { passwordResetSubject: args.passwordResetSubject } : {}),
     ...(args.audience ? { audience: args.audience } : {}),
-    ...(args.webBaseUrl ? { webBaseUrl: args.webBaseUrl } : {}),
   };
 }
 

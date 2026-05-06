@@ -52,14 +52,26 @@ export default function RegisterPage() {
         <CardHeader>
           <CardTitle>Create your account</CardTitle>
           <CardDescription>
-            We&apos;ll email you a verification link to confirm your address.
+            If this email isn&apos;t already registered, we&apos;ll send a verification
+            link to confirm your address.
           </CardDescription>
         </CardHeader>
         {state.status === 'sent' ? (
-          <CardContent>
-            <p className="text-sm text-slate-700">
-              Check your inbox for a verification link. If you don&apos;t see it within a minute,
-              check spam — the email comes from your service&apos;s configured sender.
+          <CardContent className="flex flex-col gap-3 text-sm text-slate-700">
+            <p>
+              If this email isn&apos;t already registered, we&apos;ve sent you a verification
+              link. Check your inbox (and spam) within a minute or two.
+            </p>
+            <p>
+              Already have an account?{' '}
+              <Link href="/login" className="text-brand-accent hover:underline">
+                Sign in
+              </Link>
+              {' '}or{' '}
+              <Link href="/password/forgot" className="text-brand-accent hover:underline">
+                reset your password
+              </Link>
+              .
             </p>
           </CardContent>
         ) : (
