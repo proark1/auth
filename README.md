@@ -30,12 +30,25 @@ API-first authentication service for internal platform (HR, email, meeting bot, 
 ## Repo layout
 ```
 prisma/schema.prisma   # DB model
-src/server.ts          # Fastify bootstrap
+src/server.ts          # Fastify bootstrap (API)
 src/routes/            # HTTP layer
-src/domain/            # business logic (TBD)
-src/infra/             # db, redis, email client (TBD)
-src/crypto/            # argon2, jwt, key rotation (TBD)
+src/domain/            # business logic
+src/infra/             # db, redis, email client
+src/crypto/            # argon2, jwt, key rotation
+web/                   # Next.js landing + login/register UI (deployed to Vercel)
 ```
+
+The repo is a monorepo with two independently-deployed pieces:
+
+- **API** at the root (`src/`, `prisma/`): Fastify on Node 22, deployed to
+  Railway via `Dockerfile` + `railway.toml`. Lives at `auth.<your-domain>`.
+- **Web** under `web/`: Next.js 15 App Router, deployed to Vercel with
+  **Root Directory = `web`**. Lives at the apex (`<your-domain>`). Calls the
+  API server-side via Next.js Route Handlers, so the refresh token never
+  reaches the browser.
+
+The two share nothing at runtime — `web/` only knows about the API via
+`AUTH_API_URL` and the committed OpenAPI spec.
 
 ## API docs
 
