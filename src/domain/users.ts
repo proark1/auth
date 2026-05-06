@@ -46,9 +46,14 @@ export async function registerUser(input: RegisterInput, ctx: RequestCtx = {}): 
 
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
-    // Don't tell the caller. If unverified, send a fresh verification email.
+    // Don't tell the caller — but the legitimate owner deserves a heads-up.
+    // Unverified: resend the verification email so they can finish signup.
+    // Verified: alert email pointing at login + password reset, so the real
+    // owner can recover if this was a forgotten account or an attacker.
     if (!existing.emailVerifiedAt) {
       await issueVerificationEmail(existing.id, email, existing.registeredClientId);
+    } else {
+      await issueExistingAccountAlert(email, existing.registeredClientId);
     }
     await audit({ event: 'user.register.duplicate', userId: existing.id, ...ctx });
     return;
@@ -126,6 +131,22 @@ async function issueVerificationEmail(
     to: email,
     template: 'verify_email',
     vars: { link, token: plaintext, expires_hours: String(VERIFY_TOKEN_TTL_HOURS) },
+    clientId: registeredClientId,
+  });
+}
+
+async function issueExistingAccountAlert(
+  email: string,
+  registeredClientId: string | null,
+): Promise<void> {
+  const base = await resolveWebBaseUrl(registeredClientId);
+  await sendEmail({
+    to: email,
+    template: 'register_existing_account',
+    vars: {
+      login_link: `${base}/login`,
+      password_reset_link: `${base}/password/forgot`,
+    },
     clientId: registeredClientId,
   });
 }

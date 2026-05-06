@@ -20,7 +20,8 @@ export type EmailTemplate =
   | 'new_device_login'
   | 'email_change'
   | 'account_deletion'
-  | 'magic_link';
+  | 'magic_link'
+  | 'register_existing_account';
 
 export interface SendEmailInput {
   to: string;
@@ -38,6 +39,7 @@ const SUBJECTS: Record<EmailTemplate, string> = {
   email_change: 'Confirm your new email address',
   account_deletion: 'Confirm account deletion',
   magic_link: 'Your sign-in link',
+  register_existing_account: 'Someone tried to create an account with your email',
 };
 
 function templateIdFor(template: EmailTemplate): string | undefined {
@@ -55,6 +57,8 @@ function templateIdFor(template: EmailTemplate): string | undefined {
       return e.ACCOUNT_DELETION_TEMPLATE_ID;
     case 'magic_link':
       return e.MAGIC_LINK_TEMPLATE_ID;
+    case 'register_existing_account':
+      return e.REGISTER_EXISTING_ACCOUNT_TEMPLATE_ID;
   }
 }
 
