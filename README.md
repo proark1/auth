@@ -14,7 +14,11 @@ API-first authentication service for internal platform (HR, email, meeting bot, 
 
 ## MVP scope
 1. Register / verify email / resend verification
+<<<<<<< HEAD
 2. Login (password) + TOTP MFA + recovery (backup) codes
+=======
+2. Login (password or magic link) + TOTP MFA
+>>>>>>> d9ca133 (Add magic-link (passwordless) login)
 3. Refresh token rotation, logout, session list/revoke
 4. Password forgot / reset / change
 5. JWKS endpoint + key rotation

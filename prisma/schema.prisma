@@ -138,12 +138,13 @@ model MfaBackupCode {
   @@unique([userId, codeHash])
 }
 
-// ---------- Email tokens (verify + password reset) ----------
+// ---------- Email tokens (verify + password reset + magic link + ...) ----------
 
 enum EmailTokenType {
   VERIFY_EMAIL
   PASSWORD_RESET
   ACCOUNT_DELETION
+  LOGIN_MAGIC_LINK
 }
 
 model EmailToken {
