@@ -46,10 +46,11 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  sessions     Session[]
-  mfaFactors   MfaFactor[]
-  emailTokens  EmailToken[]
-  auditEvents  AuditEvent[]
+  sessions       Session[]
+  mfaFactors     MfaFactor[]
+  mfaBackupCodes MfaBackupCode[]
+  emailTokens    EmailToken[]
+  auditEvents    AuditEvent[]
 
   @@index([status])
   @@index([role])
@@ -110,6 +111,30 @@ model MfaFactor {
   lastUsedAt  DateTime?
 
   @@index([userId])
+}
+
+// MFA recovery codes. Issued in batches when a user enrolls/regenerates.
+// Each plaintext code is shown to the user exactly once; we persist a
+// peppered HMAC of the canonicalized code (see crypto/backupCodes.ts) and
+// mark usedAt on consumption (single-use).
+//
+// Codes belong to the user (not to a specific factor) so they keep working
+// after a phone is lost and the TOTP factor is deleted/replaced.
+//
+// Uniqueness is scoped to (userId, codeHash) rather than codeHash alone:
+// at 50 bits of entropy the birthday-paradox collision rate across the whole
+// table is non-zero at scale, and a global unique would surface as a 500 to
+// an innocent user. The composite constraint also serves as the lookup index.
+model MfaBackupCode {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  codeHash  String
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@unique([userId, codeHash])
 }
 
 // ---------- Email tokens (verify + password reset) ----------
