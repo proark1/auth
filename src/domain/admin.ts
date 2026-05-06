@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../infra/db.js';
 import { audit } from '../infra/audit.js';
 import { AppError } from '../middleware/errors.js';
@@ -45,17 +46,11 @@ export async function listUsers(input: ListUsersInput): Promise<AdminUserListPag
   const limit = Math.min(input.limit ?? 50, 200);
   const offset = Math.max(input.offset ?? 0, 0);
 
-  const where: Parameters<typeof prisma.user.findMany>[0] extends infer T
-    ? T extends { where?: infer W }
-      ? W
-      : never
-    : never = {};
-  if (input.email) {
-    // Citext column makes this case-insensitive at the DB layer.
-    (where as Record<string, unknown>).email = { contains: input.email };
-  }
-  if (input.status) (where as Record<string, unknown>).status = input.status;
-  if (input.role) (where as Record<string, unknown>).roles = { has: input.role };
+  const where: Prisma.UserWhereInput = {};
+  // Citext column makes this case-insensitive at the DB layer.
+  if (input.email) where.email = { contains: input.email };
+  if (input.status) where.status = input.status;
+  if (input.role) where.roles = { has: input.role };
 
   const [rows, total] = await prisma.$transaction([
     prisma.user.findMany({
@@ -183,20 +178,24 @@ export async function updateUser(
     );
   }
 
-  const data: Parameters<typeof prisma.user.update>[0]['data'] = {};
+  const data: Prisma.UserUpdateInput = {};
   if (input.status !== undefined) data.status = input.status;
   if (input.roles !== undefined) data.roles = input.roles;
 
-  await prisma.user.update({ where: { id: userId }, data });
+  // Atomic: status flip and session revoke must both apply or neither. If
+  // session.updateMany failed after the user.update committed, we'd leave
+  // a "DISABLED but still has live refresh tokens" state — exactly the
+  // window the security guarantee is meant to close.
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({ where: { id: userId }, data });
 
-  // Disabling a user: hard-revoke their refresh tokens so they're forced
-  // off any device immediately, not "within 15 minutes" via access-token TTL.
-  if (input.status === 'DISABLED') {
-    await prisma.session.updateMany({
-      where: { userId, revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
-  }
+    if (input.status === 'DISABLED') {
+      await tx.session.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+    }
+  });
 
   await audit({
     event: 'admin.user.updated',
