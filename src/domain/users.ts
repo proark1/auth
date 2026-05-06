@@ -7,6 +7,11 @@ import { generateToken, hashToken } from '../crypto/tokens.js';
 import { AppError, errors } from '../middleware/errors.js';
 
 const VERIFY_TOKEN_TTL_HOURS = 24;
+// Cooldown between "someone tried to register your email" alerts to a single
+// account. Without this, an attacker could flood a verified user's inbox by
+// repeatedly POSTing /v1/register with their email. Per-IP rate limiting on
+// the route is bypassed by an attacker rotating IPs, so dedupe per-recipient.
+const DUPLICATE_REGISTER_ALERT_COOLDOWN_MS = 60 * 60 * 1000;
 
 interface RequestCtx {
   ip?: string | undefined;
@@ -53,7 +58,7 @@ export async function registerUser(input: RegisterInput, ctx: RequestCtx = {}): 
     if (!existing.emailVerifiedAt) {
       await issueVerificationEmail(existing.id, email, existing.registeredClientId);
     } else {
-      await issueExistingAccountAlert(email, existing.registeredClientId);
+      await issueExistingAccountAlert(existing.id, email, existing.registeredClientId, ctx);
     }
     await audit({ event: 'user.register.duplicate', userId: existing.id, ...ctx });
     return;
@@ -136,9 +141,26 @@ async function issueVerificationEmail(
 }
 
 async function issueExistingAccountAlert(
+  userId: string,
   email: string,
   registeredClientId: string | null,
+  ctx: RequestCtx,
 ): Promise<void> {
+  // Dedupe by recipient: skip if we already alerted this account within the
+  // cooldown window. Looked up via the indexed (userId, createdAt) audit
+  // query; a hot duplicate-register loop terminates after one email instead
+  // of N. Cooldown is per-user, so a real second attempt on a different
+  // account still notifies.
+  const since = new Date(Date.now() - DUPLICATE_REGISTER_ALERT_COOLDOWN_MS);
+  const recent = await prisma.auditEvent.findFirst({
+    where: { userId, event: 'user.register.duplicate.alert_sent', createdAt: { gte: since } },
+    select: { id: true },
+  });
+  if (recent) {
+    await audit({ event: 'user.register.duplicate.alert_skipped_cooldown', userId, ...ctx });
+    return;
+  }
+
   const base = await resolveWebBaseUrl(registeredClientId);
   await sendEmail({
     to: email,
@@ -149,4 +171,5 @@ async function issueExistingAccountAlert(
     },
     clientId: registeredClientId,
   });
+  await audit({ event: 'user.register.duplicate.alert_sent', userId, ...ctx });
 }
