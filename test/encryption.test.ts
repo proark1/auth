@@ -7,6 +7,7 @@ beforeAll(() => {
   process.env.REDIS_URL = 'redis://x';
   process.env.JWT_ISSUER = 'https://auth.test';
   process.env.JWT_AUDIENCE = 'test';
+  process.env.WEB_BASE_URL = 'https://app.test';
 });
 
 describe('encryption (AES-256-GCM)', async () => {

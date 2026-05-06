@@ -14,6 +14,12 @@ const schema = z.object({
 
   JWT_ISSUER: z.string().url(),
   JWT_AUDIENCE: z.string().min(1),
+
+  // Public origin of the frontend (Next.js app). Used to build links in
+  // outgoing emails (verify-email, password reset). Distinct from JWT_ISSUER,
+  // which points at the API host.
+  WEB_BASE_URL: z.string().url(),
+
   ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(900),
   REFRESH_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(60 * 60 * 24 * 30),
 

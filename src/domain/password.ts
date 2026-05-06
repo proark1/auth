@@ -37,7 +37,7 @@ export async function forgotPassword(emailIn: string, ctx: RequestCtx = {}): Pro
     data: { userId: user.id, type: 'PASSWORD_RESET', tokenHash: hash, expiresAt },
   });
 
-  const link = `${env().JWT_ISSUER.replace(/\/$/, '')}/password-reset?token=${plaintext}`;
+  const link = `${env().WEB_BASE_URL.replace(/\/$/, '')}/password/reset?token=${plaintext}`;
   await sendEmail({
     to: email,
     template: 'password_reset',

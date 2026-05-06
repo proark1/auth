@@ -106,7 +106,7 @@ async function issueVerificationEmail(
     data: { userId, type: 'VERIFY_EMAIL', tokenHash: hash, expiresAt },
   });
 
-  const link = `${env().JWT_ISSUER.replace(/\/$/, '')}/verify-email?token=${plaintext}`;
+  const link = `${env().WEB_BASE_URL.replace(/\/$/, '')}/verify-email?token=${plaintext}`;
   await sendEmail({
     to: email,
     template: 'verify_email',
