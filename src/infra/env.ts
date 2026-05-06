@@ -28,6 +28,23 @@ const schema = z.object({
   EMAIL_SERVICE_FROM: z.string().email().optional(),
   VERIFY_EMAIL_TEMPLATE_ID: z.string().uuid().optional(),
   PASSWORD_RESET_TEMPLATE_ID: z.string().uuid().optional(),
+
+  // Compromised-password check via the haveibeenpwned k-anonymity API.
+  // - HIBP_ENABLED: opt-in. When false, register/reset/change are not
+  //   blocked on a leaked-password match (and never make the outbound HTTP).
+  // - HIBP_THRESHOLD: minimum prefix-suffix count to consider a password
+  //   "compromised". 1 = block any match (most aggressive); 100 = block only
+  //   passwords seen in 100+ breaches (more permissive). Defaults to 1.
+  // - HIBP_TIMEOUT_MS: request timeout. Failures fail OPEN — we don't block
+  //   sign-ups when HIBP is having a bad day. Defaults to 2s.
+  // z.coerce.boolean() treats any non-empty string as true (so "false"
+  // becomes true). Parse the literal text instead.
+  HIBP_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v?.toLowerCase() === 'true' || v === '1'),
+  HIBP_THRESHOLD: z.coerce.number().int().min(1).default(1),
+  HIBP_TIMEOUT_MS: z.coerce.number().int().min(100).default(2000),
 });
 
 export type Env = z.infer<typeof schema>;
@@ -37,4 +54,9 @@ let cached: Env | undefined;
 export function env(): Env {
   if (!cached) cached = schema.parse(process.env);
   return cached;
+}
+
+// Test hook — discard the cache so a test that mutates process.env sees them.
+export function _resetEnvCache(): void {
+  cached = undefined;
 }

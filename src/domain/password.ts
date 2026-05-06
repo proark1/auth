@@ -2,6 +2,7 @@ import { prisma } from '../infra/db.js';
 import { audit } from '../infra/audit.js';
 import { sendEmail } from '../infra/email.js';
 import { hashPassword, verifyPassword } from '../crypto/password.js';
+import { isPasswordCompromised } from '../crypto/hibp.js';
 import { generateToken, hashToken } from '../crypto/tokens.js';
 import { env } from '../infra/env.js';
 import { AppError } from '../middleware/errors.js';
@@ -62,6 +63,15 @@ export async function resetPassword(token: string, newPassword: string, ctx: Req
     throw invalid;
   }
 
+  if (await isPasswordCompromised(newPassword)) {
+    await audit({ event: 'password.reset.fail.compromised_password', userId: row.userId, ...ctx });
+    throw new AppError(
+      400,
+      'compromised_password',
+      'this password has appeared in known data breaches; please choose another',
+    );
+  }
+
   const passwordHash = await hashPassword(newPassword);
   const now = new Date();
 
@@ -97,6 +107,15 @@ export async function changePassword(
   if (!ok) {
     await audit({ event: 'password.change.fail', userId, ...ctx });
     throw new AppError(401, 'invalid_credentials', 'current password is incorrect');
+  }
+
+  if (await isPasswordCompromised(newPassword)) {
+    await audit({ event: 'password.change.fail.compromised_password', userId, ...ctx });
+    throw new AppError(
+      400,
+      'compromised_password',
+      'this password has appeared in known data breaches; please choose another',
+    );
   }
 
   const now = new Date();
