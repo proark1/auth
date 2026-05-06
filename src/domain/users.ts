@@ -27,13 +27,21 @@ export interface RegisterInput {
   // email branding (from address, subject) for verification + future
   // password resets. Resolved server-side from the caller's s2s token.
   registeredClientId?: string | null;
+  // True when a valid service-to-service token authenticated the caller.
+  // Trusted callers get a 409 on duplicate emails so they can render a
+  // clear "email already registered" message; the public unauthenticated
+  // path keeps its silent 202 for enumeration protection.
+  trustedCaller?: boolean;
 }
 
-// Always returns 202-shaped result. We never reveal whether the email existed
-// (user-enumeration protection).
+// For unauthenticated callers, always returns 202-shaped result and never
+// reveals whether the email existed (user-enumeration protection). For
+// service-authenticated callers, throws AppError(409, 'email_taken') on a
+// duplicate so the integrator can surface a useful UX.
 export async function registerUser(input: RegisterInput, ctx: RequestCtx = {}): Promise<void> {
   const email = input.email.toLowerCase().trim();
   const registeredClientId = input.registeredClientId ?? null;
+  const trustedCaller = input.trustedCaller ?? false;
 
   // Reject passwords known to be in public breach corpora. This is the only
   // pre-existence check that runs *before* the duplicate-email branch — even
@@ -51,10 +59,24 @@ export async function registerUser(input: RegisterInput, ctx: RequestCtx = {}): 
 
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
-    // Don't tell the caller — but the legitimate owner deserves a heads-up.
-    // Unverified: resend the verification email so they can finish signup.
-    // Verified: alert email pointing at login + password reset, so the real
-    // owner can recover if this was a forgotten account or an attacker.
+    // Trusted caller (valid s2s token): tell them. The integrator can show
+    // "this email is already registered, sign in instead" to the end user.
+    // We still don't send any duplicate-account alert email here — the
+    // integrator owns the UX from this response.
+    if (trustedCaller) {
+      await audit({ event: 'user.register.duplicate', userId: existing.id, ...ctx });
+      throw new AppError(
+        409,
+        'email_taken',
+        'an account with this email already exists',
+      );
+    }
+    // Public caller: don't reveal existence. The legitimate owner deserves
+    // a heads-up, though.
+    //   Unverified: resend the verification email so they can finish signup.
+    //   Verified:   alert email pointing at login + password reset, so the
+    //               real owner can recover if this was a forgotten account
+    //               or an attacker.
     if (!existing.emailVerifiedAt) {
       await issueVerificationEmail(existing.id, email, existing.registeredClientId);
     } else {

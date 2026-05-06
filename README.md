@@ -96,6 +96,7 @@ npm run dev
 - One Railway project, three components: `auth-service` (this repo, Dockerfile build), Postgres plugin, Redis plugin.
 - `railway.toml` runs `prisma migrate deploy` before each deploy and healthchecks `/readyz` (verifies DB connectivity). `/healthz` is the simpler "process alive" liveness probe.
 - Required env vars on the auth service itself: `DATABASE_URL`, `REDIS_URL`, `APP_ENCRYPTION_KEY`, `JWT_ISSUER`, `JWT_AUDIENCE` (fallback for users not registered through a client), `WEB_BASE_URL` (fallback for the auth-service's own login/reset pages), `EMAIL_SERVICE_URL`, `EMAIL_SERVICE_TOKEN`.
+- Optional: `REGISTER_REQUIRE_SERVICE_TOKEN=true` rejects unauthenticated `POST /v1/register` calls with 401 `service_token_required`. Recommended once every integrator is wiring its service-to-service bearer; without it, a misconfigured integrator silently falls back to the auth service's own branding (verification email comes from `noreply@<auth-host>`, links point at the global `WEB_BASE_URL`).
 - Signing private keys + `APP_ENCRYPTION_KEY` should be injected from a real secret store (Doppler / Infisical), not pasted into the Railway UI.
 - Put Cloudflare in front and add WAF rate limits on `/v1/login`, `/v1/register`, `/v1/password/forgot`.
 
@@ -113,3 +114,39 @@ At startup, the consumer fetches:
 
 It then verifies inbound JWTs against `iss = discovered_issuer`, `aud = own
 audience`. No `JWT_ISSUER` / `JWT_AUDIENCE` env vars to mirror, no drift.
+
+The full integration walkthrough — claim contract, audience format, key
+rotation, error envelope, end-to-end `curl` examples for every flow — lives
+in [`docs/usage.md`](docs/usage.md). Start at § 5 (service-to-service) and
+§ 6.1 (token claim contract).
+
+#### Local-dev for integrators
+
+To exercise the integration without a deployed auth service:
+
+```sh
+# In the auth repo
+cp .env.example .env
+docker compose up -d        # Postgres + Redis
+npm install
+npm run prisma:migrate
+npm run dev                 # API at http://localhost:8080
+
+# Provision a test client for your service
+npm run create-client -- \
+  --name="Local Test" \
+  --audience=local-test \
+  --web-base-url=http://localhost:3000
+# → prints client_id + client_secret. Wire them into your service's .env.
+
+# In your consumer service
+export AUTH_API_URL=http://localhost:8080
+export AUTH_CLIENT_ID=svc_…
+export AUTH_CLIENT_SECRET=…
+```
+
+`EMAIL_SERVICE_URL` is optional in dev. Without it, outgoing emails are not
+sent — `deliverEmail` logs `[email] email service not fully configured —
+would have sent: …` to stdout with the full payload (including the verify
+link / reset link), so you can copy the token straight from the dev console
+to test the full flow without a mail provider.

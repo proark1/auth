@@ -262,19 +262,42 @@ export async function registerRoutes(app: AppInstance) {
       tags: ['registration'],
       summary: 'Register a new account',
       description:
-        'Always returns 202 regardless of whether the email is already registered, to prevent enumeration. ' +
-        'If called with a valid service-to-service access token, the user is associated with that service ' +
-        'and verification/password emails will use the service\'s configured From address and subject.',
+        'Two distinct contracts based on the caller:\n\n' +
+        '• **Unauthenticated (no bearer):** always returns 202 regardless of ' +
+        'whether the email already exists, to prevent user enumeration. ' +
+        'Verification/password emails fall back to the auth service\'s own ' +
+        '`EMAIL_SERVICE_FROM` / `WEB_BASE_URL` / `JWT_AUDIENCE`. Set ' +
+        '`REGISTER_REQUIRE_SERVICE_TOKEN=true` on the auth service to forbid ' +
+        'this path entirely (returns 401 instead).\n\n' +
+        '• **Service-authenticated (valid `client_credentials` bearer):** the ' +
+        'user is associated with that service, verification/password emails ' +
+        'use that service\'s configured `webBaseUrl` / `fromAddress` / subjects, ' +
+        'and access tokens are stamped with that service\'s `audience`. ' +
+        'Duplicate emails return **409 `email_taken`** so the integrator can ' +
+        'show a useful "sign in instead" message.',
       body: registerBody,
       response: {
         202: z.object({ status: z.literal('pending_verification') }),
         400: errorResponse,
+        401: errorResponse,
+        409: errorResponse,
       },
     },
     handler: async (req, reply) => {
       const body = req.body as z.infer<typeof registerBody>;
       const registeredClientId = await resolveAttachedClientId(req);
-      await registerUser({ ...body, registeredClientId }, ctxFrom(req));
+      const e = env();
+      if (e.REGISTER_REQUIRE_SERVICE_TOKEN && !registeredClientId) {
+        throw new AppError(
+          401,
+          'service_token_required',
+          'POST /v1/register requires a service-to-service bearer token on this deployment',
+        );
+      }
+      await registerUser(
+        { ...body, registeredClientId, trustedCaller: registeredClientId !== null },
+        ctxFrom(req),
+      );
       return reply.code(202).send({ status: 'pending_verification' as const });
     },
   });
