@@ -122,6 +122,56 @@ export async function registerRoutes(app: AppInstance) {
     handler: async () => ({ ok: true as const }),
   });
 
+  // Readiness probe — distinct from liveness. /healthz only proves the
+  // process is alive; /readyz proves the dependencies it needs to actually
+  // serve traffic are reachable. Used by Railway / k8s readiness checks so
+  // a fresh container isn't sent traffic before its DB pool warms.
+  //
+  // Currently checks Postgres only — Redis isn't wired into a runtime client
+  // yet (REDIS_URL exists in env for forward compatibility). Add a Redis
+  // ping here when the first feature actually depends on it.
+  const readyResponse = z.object({
+    ok: z.boolean(),
+    checks: z.object({
+      db: z.object({
+        ok: z.boolean(),
+        latency_ms: z.number().int().optional(),
+        error: z.string().optional(),
+      }),
+    }),
+  });
+  r.route({
+    method: 'GET',
+    url: '/readyz',
+    config: uncapped,
+    schema: {
+      tags: ['discovery'],
+      summary: 'Readiness probe (verifies DB connectivity)',
+      response: { 200: readyResponse, 503: readyResponse },
+    },
+    handler: async (_req, reply) => {
+      const start = Date.now();
+      let dbOk = false;
+      let dbError: string | undefined;
+      try {
+        await prisma.$queryRaw`SELECT 1`;
+        dbOk = true;
+      } catch (err) {
+        dbError = err instanceof Error ? err.message.slice(0, 200) : String(err);
+      }
+      const latencyMs = Date.now() - start;
+      const status = dbOk ? 200 : 503;
+      return reply.code(status).send({
+        ok: dbOk,
+        checks: {
+          db: dbOk
+            ? { ok: true, latency_ms: latencyMs }
+            : { ok: false, latency_ms: latencyMs, error: dbError ?? 'unknown' },
+        },
+      });
+    },
+  });
+
   r.route({
     method: 'GET',
     url: '/.well-known/jwks.json',
