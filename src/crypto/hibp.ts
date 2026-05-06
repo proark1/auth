@@ -48,7 +48,9 @@ export async function checkPasswordPwned(
       signal: ac.signal,
     });
     if (!res.ok) {
-      // HIBP returned non-200 — fail open.
+      // HIBP returned non-200 — fail open. Drain the body so undici doesn't
+      // hold the connection open waiting for it; we have no use for it.
+      await res.arrayBuffer().catch(() => {});
       return { prefix, count: 0, checked: false };
     }
     const body = await res.text();

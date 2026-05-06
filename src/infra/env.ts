@@ -42,7 +42,7 @@ const schema = z.object({
   HIBP_ENABLED: z
     .string()
     .optional()
-    .transform((v) => v === 'true' || v === '1'),
+    .transform((v) => v?.toLowerCase() === 'true' || v === '1'),
   HIBP_THRESHOLD: z.coerce.number().int().min(1).default(1),
   HIBP_TIMEOUT_MS: z.coerce.number().int().min(100).default(2000),
 });
