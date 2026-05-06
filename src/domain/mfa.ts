@@ -111,6 +111,7 @@ interface MfaChallengeUser {
   email: string;
   emailVerifiedAt: Date | null;
   role: import('@prisma/client').Role;
+  registeredClientId: string | null;
 }
 
 // Shared preamble for both TOTP and backup-code completion paths: validate the
@@ -142,6 +143,7 @@ async function resolveMfaChallenge(
     email: user.email,
     emailVerifiedAt: user.emailVerifiedAt,
     role: user.role,
+    registeredClientId: user.registeredClientId,
   };
 }
 
@@ -230,6 +232,8 @@ export async function completeMfaLogin(input: CompleteMfaInput): Promise<IssuedS
     role: user.role,
     ip: input.ip,
     userAgent: input.userAgent,
+    registeredClientId: user.registeredClientId,
+    loggedInVia: 'password+totp',
   });
 
   await audit({
