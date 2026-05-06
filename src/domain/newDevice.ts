@@ -6,10 +6,12 @@ import { env } from '../infra/env.js';
 // "We noticed a sign-in from a new device or network" notification.
 //
 // Detection: a session is "new device" if NO prior session for this user
-// (within NEW_DEVICE_WINDOW_DAYS, regardless of revoked state) shared either
-// the same IP or the same User-Agent. Two signals because each is independently
-// noisy: IPs roll over (mobile carriers, VPNs); UAs change with browser
-// updates. Requiring both to differ keeps false positives low.
+// (within NEW_DEVICE_WINDOW_DAYS, regardless of revoked state) was from the
+// same IP. We trigger on IP because UA is trivially spoofable — an attacker
+// can copy the victim's User-Agent and silence an OR-shaped alarm even
+// though they're on a completely new IP. Mobile carriers do rotate IPs,
+// which means some false positives ("signed in from a new network"); that's
+// the right side of the tradeoff for a security alert.
 //
 // All failures are swallowed. This is a notification, not a security gate —
 // blocking login on a mailer hiccup would be hostile, and the audit log
@@ -38,10 +40,7 @@ export async function notifyIfNewDevice(input: NotifyInput): Promise<void> {
         userId: input.userId,
         createdAt: { gte: since },
         ...(input.excludeSessionId ? { id: { not: input.excludeSessionId } } : {}),
-        OR: [
-          { ip: input.ip },
-          ...(input.userAgent ? [{ userAgent: input.userAgent }] : []),
-        ],
+        ip: input.ip,
       },
       select: { id: true },
     });

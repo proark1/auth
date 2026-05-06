@@ -60,10 +60,11 @@ export async function issueSession(input: IssueSessionInput): Promise<IssuedSess
   });
 
   // Fresh login (not a rotation) and the caller didn't suppress notifications
-  // → check whether this device looks new, and email the user if so. Runs
-  // best-effort; failures don't block the session issuance.
+  // → kick off the new-device check in the background. Login MUST NOT wait
+  // on a DB lookup + outbound email. notifyIfNewDevice already swallows its
+  // own errors, so a fire-and-forget `void` is the right shape here.
   if (input.notifyOnNewDevice !== false) {
-    await notifyIfNewDevice({
+    void notifyIfNewDevice({
       userId: input.userId,
       email: input.email,
       ip: input.ip ?? null,
