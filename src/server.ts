@@ -29,9 +29,13 @@ export async function buildServer() {
     credentials: true,
   });
   await app.register(rateLimit, {
-    global: false,
+    global: true,
     max: 60,
     timeWindow: '1 minute',
+    // Swagger UI loads many static assets per page view; skip rate-limiting
+    // for /docs so browsing the API reference doesn't burn the budget.
+    skipOnError: false,
+    allowList: (req) => req.url.startsWith('/docs'),
   });
 
   await app.register(swagger, {
