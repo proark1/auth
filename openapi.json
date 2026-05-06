@@ -2590,7 +2590,6 @@
         }
       }
     },
-<<<<<<< HEAD
     "/v1/mfa/backup-codes/regenerate": {
       "post": {
         "summary": "Generate a fresh batch of MFA backup codes",
@@ -2598,7 +2597,157 @@
           "mfa"
         ],
         "description": "Returns plaintext codes exactly once. Any previously-issued codes are invalidated. Display these to the user and tell them to store them somewhere safe.",
-=======
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "codes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "count": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "codes",
+                    "count"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {}
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {}
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/mfa/backup-codes": {
+      "get": {
+        "summary": "Number of unused MFA backup codes remaining",
+        "tags": [
+          "mfa"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "remaining": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "remaining"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {}
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/mfa/passkey/register/start": {
       "post": {
         "summary": "Begin passkey enrollment (returns WebAuthn creation options)",
@@ -2616,7 +2765,6 @@
             }
           }
         },
->>>>>>> d011607 (Add passkeys / WebAuthn)
         "security": [
           {
             "bearerAuth": []
@@ -2630,23 +2778,6 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-<<<<<<< HEAD
-                    "codes": {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    },
-                    "count": {
-                      "type": "integer",
-                      "minimum": -9007199254740991,
-                      "maximum": 9007199254740991
-                    }
-                  },
-                  "required": [
-                    "codes",
-                    "count"
-=======
                     "options": {},
                     "challenge_token": {
                       "type": "string"
@@ -2980,7 +3111,6 @@
                   },
                   "required": [
                     "code"
->>>>>>> d011607 (Add passkeys / WebAuthn)
                   ],
                   "additionalProperties": false
                 }
@@ -3012,57 +3142,15 @@
                 }
               }
             }
-<<<<<<< HEAD
-          },
-          "404": {
-            "description": "Default Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "code": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "issues": {
-                      "type": "array",
-                      "items": {}
-                    }
-                  },
-                  "required": [
-                    "code"
-                  ],
-                  "additionalProperties": false
-                }
-              }
-            }
-=======
->>>>>>> d011607 (Add passkeys / WebAuthn)
           }
         }
       }
     },
-<<<<<<< HEAD
-    "/v1/mfa/backup-codes": {
-      "get": {
-        "summary": "Number of unused MFA backup codes remaining",
-        "tags": [
-          "mfa"
-        ],
-        "security": [
-          {
-            "bearerAuth": []
-          }
-=======
     "/v1/login/passkey/start": {
       "post": {
         "summary": "Begin passkey login (returns WebAuthn request options)",
         "tags": [
           "auth"
->>>>>>> d011607 (Add passkeys / WebAuthn)
         ],
         "responses": {
           "200": {
@@ -3072,16 +3160,6 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-<<<<<<< HEAD
-                    "remaining": {
-                      "type": "integer",
-                      "minimum": -9007199254740991,
-                      "maximum": 9007199254740991
-                    }
-                  },
-                  "required": [
-                    "remaining"
-=======
                     "options": {},
                     "challenge_token": {
                       "type": "string"
@@ -3190,7 +3268,6 @@
                   },
                   "required": [
                     "code"
->>>>>>> d011607 (Add passkeys / WebAuthn)
                   ],
                   "additionalProperties": false
                 }

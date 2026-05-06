@@ -326,6 +326,7 @@ export async function verifyPasskeyLogin(
     userId,
     email: user.email,
     emailVerified: !!user.emailVerifiedAt,
+    role: user.role,
   };
   if (input.ip !== undefined) sessionInput.ip = input.ip;
   if (input.userAgent !== undefined) sessionInput.userAgent = input.userAgent;
