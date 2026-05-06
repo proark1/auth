@@ -17,6 +17,12 @@ interface RequestCtx {
   userAgent?: string | undefined;
 }
 
+// Mirrors login.ts. MFA failures share the password failed-login counter so
+// an attacker who already has the password can't brute-force the 6-digit
+// TOTP code from a pool of IPs while a single mfa_token is alive.
+const MAX_FAILED_LOGINS = 5;
+const LOCKOUT_DURATION_MS = 15 * 60 * 1000;
+
 // ---------- TOTP setup ----------
 
 export interface TotpSetupResult {
@@ -121,6 +127,19 @@ export async function completeMfaLogin(input: CompleteMfaInput): Promise<IssuedS
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user || user.status !== 'ACTIVE') throw invalid;
 
+  // Re-check lockout: a user can be locked between /v1/login and /v1/login/mfa
+  // (e.g. another attacker hammering passwords). The mfa_token alone must not
+  // bypass the lock.
+  if (user.lockedUntil && user.lockedUntil > new Date()) {
+    await audit({
+      event: 'login.mfa.fail.locked',
+      userId,
+      ip: input.ip,
+      userAgent: input.userAgent,
+    });
+    throw new AppError(423, 'account_locked', 'account temporarily locked, try again later');
+  }
+
   const factors = await prisma.mfaFactor.findMany({
     where: { userId, type: 'TOTP', confirmedAt: { not: null } },
   });
@@ -143,14 +162,43 @@ export async function completeMfaLogin(input: CompleteMfaInput): Promise<IssuedS
   }
 
   if (!matched) {
+    // Bump the shared failed-login counter so MFA brute-force triggers the
+    // same lockout as password brute-force. The mfa_token stays valid for its
+    // full TTL, but lockout cuts off code-guessing across IPs.
+    //
+    // Atomic increment: concurrent failed attempts from rotating IPs would
+    // otherwise all read the same stale failedLoginCount and each write back
+    // `stale + 1`, letting the attacker exceed MAX_FAILED_LOGINS before the
+    // lockout fires.
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: { failedLoginCount: { increment: 1 } },
+      select: { failedLoginCount: true },
+    });
+    const shouldLock = updated.failedLoginCount >= MAX_FAILED_LOGINS;
+    if (shouldLock) {
+      await prisma.user.update({
+        where: { id: userId },
+        data: { lockedUntil: new Date(Date.now() + LOCKOUT_DURATION_MS) },
+      });
+    }
     await audit({
       event: 'login.mfa.fail',
       userId,
       ip: input.ip,
       userAgent: input.userAgent,
+      metadata: { failedCount: updated.failedLoginCount, locked: shouldLock },
     });
     throw new AppError(401, 'invalid_code', 'invalid TOTP code');
   }
+
+  // Success: always reset the shared counter. Skipping based on the local
+  // (potentially stale) `user` row would miss the case where concurrent
+  // failures bumped the DB value while we were verifying the code.
+  await prisma.user.update({
+    where: { id: userId },
+    data: { failedLoginCount: 0, lockedUntil: null },
+  });
 
   await prisma.mfaFactor.update({
     where: { id: matched.id },

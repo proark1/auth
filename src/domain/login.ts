@@ -1,5 +1,10 @@
 import { prisma } from '../infra/db.js';
-import { verifyPassword, needsRehash, hashPassword } from '../crypto/password.js';
+import {
+  verifyPassword,
+  needsRehash,
+  hashPassword,
+  verifyDummyPassword,
+} from '../crypto/password.js';
 import { audit } from '../infra/audit.js';
 import { AppError } from '../middleware/errors.js';
 import { issueSession, type IssuedSession } from './sessions.js';
@@ -32,6 +37,10 @@ export async function login(input: LoginInput, ctx: LoginCtx = {}): Promise<Logi
 
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
+    // Equalize timing with the wrong-password branch (~argon2.verify cost).
+    // Otherwise the no-user branch returns ~50ms faster and leaks account
+    // existence even though the response is identical.
+    await verifyDummyPassword(input.password);
     await audit({ event: 'login.fail.unknown_email', metadata: { email }, ...ctx });
     throw genericFail;
   }
@@ -48,20 +57,26 @@ export async function login(input: LoginInput, ctx: LoginCtx = {}): Promise<Logi
 
   const passwordOk = await verifyPassword(user.passwordHash, input.password);
   if (!passwordOk) {
-    const failedCount = user.failedLoginCount + 1;
-    const shouldLock = failedCount >= MAX_FAILED_LOGINS;
-    await prisma.user.update({
+    // Atomic increment: concurrent failed attempts would otherwise all read
+    // the same stale failedLoginCount and each write back `stale + 1`,
+    // exceeding MAX_FAILED_LOGINS before the lockout actually engages.
+    const updated = await prisma.user.update({
       where: { id: user.id },
-      data: {
-        failedLoginCount: failedCount,
-        lockedUntil: shouldLock ? new Date(Date.now() + LOCKOUT_DURATION_MS) : null,
-      },
+      data: { failedLoginCount: { increment: 1 } },
+      select: { failedLoginCount: true },
     });
+    const shouldLock = updated.failedLoginCount >= MAX_FAILED_LOGINS;
+    if (shouldLock) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { lockedUntil: new Date(Date.now() + LOCKOUT_DURATION_MS) },
+      });
+    }
     await audit({
       event: 'login.fail.bad_password',
       userId: user.id,
       ...ctx,
-      metadata: { failedCount, locked: shouldLock },
+      metadata: { failedCount: updated.failedLoginCount, locked: shouldLock },
     });
     throw genericFail;
   }

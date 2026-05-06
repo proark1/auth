@@ -15,9 +15,21 @@ import { registerRoutes } from './routes/index.js';
 import { AppError } from './middleware/errors.js';
 
 export async function buildServer() {
+  // trustProxy: how many proxy hops to honor for X-Forwarded-* (rate-limit IP,
+  // req.ip). Defaults to 1 (Cloudflare → Railway). `true` would let any caller
+  // forge X-Forwarded-For and bypass the per-IP rate limit, so we never want
+  // that in production. Override via TRUST_PROXY when fronted by more hops.
+  const trustProxyEnv = process.env.TRUST_PROXY;
+  const trustProxy: number | boolean =
+    trustProxyEnv === undefined
+      ? 1
+      : /^\d+$/.test(trustProxyEnv)
+        ? Number(trustProxyEnv)
+        : trustProxyEnv === 'true';
+
   const app = Fastify({
     logger: { level: process.env.LOG_LEVEL ?? 'info' },
-    trustProxy: true,
+    trustProxy,
   }).withTypeProvider<ZodTypeProvider>();
 
   app.setValidatorCompiler(validatorCompiler);
@@ -38,6 +50,11 @@ export async function buildServer() {
     allowList: (req) => req.url.startsWith('/docs'),
   });
 
+  // Swagger spec is always built (used by `npm run openapi:dump` and the
+  // committed openapi.json), but the interactive /docs UI is only mounted
+  // outside production unless explicitly enabled via ENABLE_DOCS_UI=true.
+  // Leaving an unauthenticated Swagger UI on a public auth endpoint is gratuitous
+  // surface area for attackers to enumerate routes / payloads.
   await app.register(swagger, {
     openapi: {
       openapi: '3.1.0',
@@ -71,10 +88,14 @@ export async function buildServer() {
     transform: jsonSchemaTransform,
   });
 
-  await app.register(swaggerUi, {
-    routePrefix: '/docs',
-    uiConfig: { docExpansion: 'list', deepLinking: true },
-  });
+  const docsUiEnabled =
+    process.env.ENABLE_DOCS_UI === 'true' || process.env.NODE_ENV !== 'production';
+  if (docsUiEnabled) {
+    await app.register(swaggerUi, {
+      routePrefix: '/docs',
+      uiConfig: { docExpansion: 'list', deepLinking: true },
+    });
+  }
 
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof AppError) {
