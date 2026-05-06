@@ -5,6 +5,7 @@ import { issueAccessToken } from '../crypto/signing.js';
 import { env } from '../infra/env.js';
 import { audit } from '../infra/audit.js';
 import { AppError } from '../middleware/errors.js';
+import { notifyIfNewDevice } from './newDevice.js';
 
 export interface IssueSessionInput {
   userId: string;
@@ -13,6 +14,14 @@ export interface IssueSessionInput {
   role: Role;
   ip?: string | undefined;
   userAgent?: string | undefined;
+  // Fire the "new device" notification email on this session if it's a fresh
+  // login. Refresh-token rotations set this to false — we don't want to spam
+  // the user every 15 minutes when they're already signed in. Default true.
+  notifyOnNewDevice?: boolean | undefined;
+  // Audit/email metadata: 'password' | 'magic_link' | 'passkey' | etc.
+  // Drives only the new-device email's "method" field today.
+  loggedInVia?: string | undefined;
+  registeredClientId?: string | null | undefined;
 }
 
 function rolesClaim(role: Role): string[] {
@@ -49,6 +58,21 @@ export async function issueSession(input: IssueSessionInput): Promise<IssuedSess
     emailVerified: input.emailVerified,
     roles: rolesClaim(input.role),
   });
+
+  // Fresh login (not a rotation) and the caller didn't suppress notifications
+  // → check whether this device looks new, and email the user if so. Runs
+  // best-effort; failures don't block the session issuance.
+  if (input.notifyOnNewDevice !== false) {
+    await notifyIfNewDevice({
+      userId: input.userId,
+      email: input.email,
+      ip: input.ip ?? null,
+      userAgent: input.userAgent ?? null,
+      excludeSessionId: session.id,
+      registeredClientId: input.registeredClientId ?? null,
+      loggedInVia: input.loggedInVia,
+    });
+  }
 
   return { accessToken, refreshToken, refreshTokenExpiresAt: expiresAt, sessionId: session.id };
 }
@@ -91,6 +115,9 @@ export async function rotateSession(refreshTokenPlain: string, ctx: RotateCtx = 
     role: user.role,
     ip: ctx.ip,
     userAgent: ctx.userAgent,
+    // Refresh-rotation isn't a fresh login; skip the new-device email so we
+    // don't spam the user on every 15-minute rotation.
+    notifyOnNewDevice: false,
   });
 
   await prisma.session.update({

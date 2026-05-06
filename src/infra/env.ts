@@ -28,6 +28,7 @@ const schema = z.object({
   EMAIL_SERVICE_FROM: z.string().email().optional(),
   VERIFY_EMAIL_TEMPLATE_ID: z.string().uuid().optional(),
   PASSWORD_RESET_TEMPLATE_ID: z.string().uuid().optional(),
+  NEW_DEVICE_LOGIN_TEMPLATE_ID: z.string().uuid().optional(),
 
   // Compromised-password check via the haveibeenpwned k-anonymity API.
   // - HIBP_ENABLED: opt-in. When false, register/reset/change are not
@@ -53,6 +54,17 @@ const schema = z.object({
     .optional()
     .transform((v) => v?.toLowerCase() === 'true' || v === '1'),
   EMAIL_WORKER_POLL_MS: z.coerce.number().int().min(1000).default(15_000),
+
+  // "We noticed a sign-in from a new device/network" notification email.
+  // Off by default. When on, issueSession compares the new session's IP
+  // against the user's prior sessions in the last NEW_DEVICE_WINDOW_DAYS;
+  // if no prior session matched, an informational email is sent.
+  // Failures don't break login.
+  NEW_DEVICE_EMAIL_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v?.toLowerCase() === 'true' || v === '1'),
+  NEW_DEVICE_WINDOW_DAYS: z.coerce.number().int().min(1).default(90),
 });
 
 export type Env = z.infer<typeof schema>;

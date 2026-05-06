@@ -14,7 +14,7 @@ import { prisma } from './db.js';
 // nextAttemptAt has passed. Net effect: a register / reset request never
 // fails because the mailer hiccuped.
 
-export type EmailTemplate = 'verify_email' | 'password_reset';
+export type EmailTemplate = 'verify_email' | 'password_reset' | 'new_device_login';
 
 export interface SendEmailInput {
   to: string;
@@ -28,11 +28,19 @@ export interface SendEmailInput {
 const SUBJECTS: Record<EmailTemplate, string> = {
   verify_email: 'Verify your email',
   password_reset: 'Reset your password',
+  new_device_login: 'New sign-in to your account',
 };
 
 function templateIdFor(template: EmailTemplate): string | undefined {
   const e = env();
-  return template === 'verify_email' ? e.VERIFY_EMAIL_TEMPLATE_ID : e.PASSWORD_RESET_TEMPLATE_ID;
+  switch (template) {
+    case 'verify_email':
+      return e.VERIFY_EMAIL_TEMPLATE_ID;
+    case 'password_reset':
+      return e.PASSWORD_RESET_TEMPLATE_ID;
+    case 'new_device_login':
+      return e.NEW_DEVICE_LOGIN_TEMPLATE_ID;
+  }
 }
 
 interface ClientBranding {
@@ -59,10 +67,15 @@ async function resolve(input: SendEmailInput): Promise<ResolvedEmail> {
   const e = env();
   const branding = input.clientId ? await loadClientBranding(input.clientId) : null;
   const from = branding?.fromAddress ?? e.EMAIL_SERVICE_FROM;
-  const subject =
-    (input.template === 'verify_email'
+  // Per-client subject branding only covers verify_email + password_reset.
+  // Other templates fall back to the global default.
+  const brandingSubject =
+    input.template === 'verify_email'
       ? branding?.verifyEmailSubject
-      : branding?.passwordResetSubject) ?? SUBJECTS[input.template];
+      : input.template === 'password_reset'
+        ? branding?.passwordResetSubject
+        : null;
+  const subject = brandingSubject ?? SUBJECTS[input.template];
   return { from, subject, templateId: templateIdFor(input.template) };
 }
 

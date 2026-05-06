@@ -114,6 +114,8 @@ export async function login(input: LoginInput, ctx: LoginCtx = {}): Promise<Logi
     role: user.role,
     ip: ctx.ip,
     userAgent: ctx.userAgent,
+    registeredClientId: user.registeredClientId,
+    loggedInVia: 'password',
   });
 
   await audit({
