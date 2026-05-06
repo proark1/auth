@@ -18,7 +18,7 @@ import { audit } from '../infra/audit.js';
 import { AppError } from '../middleware/errors.js';
 import { webauthnConfig } from '../crypto/webauthn.js';
 import { issueWebauthnChallenge, verifyWebauthnChallenge } from '../crypto/signing.js';
-import { issueSession, type IssuedSession } from './sessions.js';
+import { issueSession, type IssuedSession, type IssueSessionInput } from './sessions.js';
 
 interface RequestCtx {
   ip?: string | undefined;
@@ -320,16 +320,16 @@ export async function verifyPasskeyLogin(
     data: { failedLoginCount: 0, lockedUntil: null },
   });
 
-  const session = await issueSession({
+  // exactOptionalPropertyTypes is finicky about optional fields constructed
+  // via spreads — build the input via mutation on a typed local instead.
+  const sessionInput: IssueSessionInput = {
     userId,
     email: user.email,
     emailVerified: !!user.emailVerifiedAt,
-    // Conditional spread keeps `exactOptionalPropertyTypes` happy by omitting
-    // the keys entirely when the values are undefined, instead of passing
-    // explicit-undefined for an optional field.
-    ...(input.ip !== undefined ? { ip: input.ip } : {}),
-    ...(input.userAgent !== undefined ? { userAgent: input.userAgent } : {}),
-  });
+  };
+  if (input.ip !== undefined) sessionInput.ip = input.ip;
+  if (input.userAgent !== undefined) sessionInput.userAgent = input.userAgent;
+  const session = await issueSession(sessionInput);
 
   await audit({
     event: 'login.passkey.success',
