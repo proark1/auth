@@ -135,7 +135,9 @@ export async function registerRoutes(app: AppInstance) {
     checks: z.object({
       db: z.object({
         ok: z.boolean(),
-        latency_ms: z.number().int().optional(),
+        // Always populated for both success and failure — handler measures
+        // wall time around the probe call. Non-negative by construction.
+        latency_ms: z.number().int().min(0),
         error: z.string().optional(),
       }),
     }),
@@ -157,7 +159,9 @@ export async function registerRoutes(app: AppInstance) {
         await prisma.$queryRaw`SELECT 1`;
         dbOk = true;
       } catch (err) {
-        dbError = err instanceof Error ? err.message.slice(0, 200) : String(err);
+        // Truncate regardless of source — non-Error throws (`throw "boom"`)
+        // shouldn't sneak past the cap on response-body size.
+        dbError = (err instanceof Error ? err.message : String(err)).slice(0, 200);
       }
       const latencyMs = Date.now() - start;
       const status = dbOk ? 200 : 503;

@@ -76,7 +76,7 @@
                             },
                             "latency_ms": {
                               "type": "integer",
-                              "minimum": -9007199254740991,
+                              "minimum": 0,
                               "maximum": 9007199254740991
                             },
                             "error": {
@@ -84,7 +84,8 @@
                             }
                           },
                           "required": [
-                            "ok"
+                            "ok",
+                            "latency_ms"
                           ],
                           "additionalProperties": false
                         }
@@ -125,7 +126,7 @@
                             },
                             "latency_ms": {
                               "type": "integer",
-                              "minimum": -9007199254740991,
+                              "minimum": 0,
                               "maximum": 9007199254740991
                             },
                             "error": {
@@ -133,7 +134,8 @@
                             }
                           },
                           "required": [
-                            "ok"
+                            "ok",
+                            "latency_ms"
                           ],
                           "additionalProperties": false
                         }
