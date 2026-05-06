@@ -23,6 +23,14 @@ import {
 import { regenerateBackupCodes, countUnusedBackupCodes } from '../domain/backupCodes.js';
 import { requestEmailChange, confirmEmailChange } from '../domain/emailChange.js';
 import { requestMagicLink, verifyMagicLink } from '../domain/magicLink.js';
+import {
+  startPasskeyRegistration,
+  verifyPasskeyRegistration,
+  deletePasskey,
+  listPasskeys,
+  startPasskeyLogin,
+  verifyPasskeyLogin,
+} from '../domain/passkeys.js';
 import { issueClientCredentialsToken } from '../domain/services.js';
 import {
   requestAccountDeletion,
@@ -917,6 +925,163 @@ export async function registerRoutes(app: AppInstance) {
       const me = currentUser(req);
       const remaining = await countUnusedBackupCodes(me.id);
       return { remaining };
+    },
+  });
+
+  // --- Passkeys (WebAuthn) ---
+  //
+  // The challenge_token returned by the */start endpoints is a server-signed
+  // JWT carrying the random WebAuthn challenge. The client passes it back
+  // unchanged on /verify; we never trust the client's reported challenge.
+  //
+  // The WebAuthn response objects are large and provider-shaped. We don't
+  // model them with strict zod — simplewebauthn is the source of truth and
+  // rejects malformed input. The route schema caps overall body size via
+  // Fastify's bodyLimit defaults to keep payloads reasonable.
+
+  const passkeyRegisterStartBody = z.object({}).optional();
+  const passkeyOptionsResponse = z.object({
+    options: z.unknown(),
+    challenge_token: z.string(),
+  });
+  r.route({
+    method: 'POST',
+    url: '/v1/mfa/passkey/register/start',
+    preHandler: [requireUser],
+    schema: {
+      tags: ['mfa'],
+      summary: 'Begin passkey enrollment (returns WebAuthn creation options)',
+      security: [{ bearerAuth: [] }],
+      body: passkeyRegisterStartBody,
+      response: { 200: passkeyOptionsResponse, 401: errorResponse },
+    },
+    handler: async (req) => {
+      const me = currentUser(req);
+      const result = await startPasskeyRegistration(me.id, ctxFrom(req));
+      return { options: result.options, challenge_token: result.challengeToken };
+    },
+  });
+
+  const passkeyRegisterVerifyBody = z.object({
+    challenge_token: z.string().min(1).max(2048),
+    response: z.unknown(), // RegistrationResponseJSON, validated by simplewebauthn
+    label: z.string().max(100).optional(),
+  });
+  r.route({
+    method: 'POST',
+    url: '/v1/mfa/passkey/register/verify',
+    preHandler: [requireUser],
+    schema: {
+      tags: ['mfa'],
+      summary: 'Confirm passkey enrollment with the authenticator response',
+      security: [{ bearerAuth: [] }],
+      body: passkeyRegisterVerifyBody,
+      response: {
+        200: z.object({ factor_id: z.string().uuid() }),
+        400: errorResponse,
+        401: errorResponse,
+      },
+    },
+    handler: async (req) => {
+      const me = currentUser(req);
+      const body = req.body as z.infer<typeof passkeyRegisterVerifyBody>;
+      const result = await verifyPasskeyRegistration(
+        {
+          userId: me.id,
+          challengeToken: body.challenge_token,
+          response: body.response as Parameters<typeof verifyPasskeyRegistration>[0]['response'],
+          label: body.label,
+        },
+        ctxFrom(req),
+      );
+      return { factor_id: result.factorId };
+    },
+  });
+
+  const passkeyItem = z.object({
+    id: z.string().uuid(),
+    label: z.string().nullable(),
+    aaguid: z.string().nullable(),
+    transports: z.array(z.string()),
+    createdAt: z.string().datetime().or(z.date()),
+    lastUsedAt: z.string().datetime().or(z.date()).nullable(),
+  });
+  r.route({
+    method: 'GET',
+    url: '/v1/mfa/passkeys',
+    preHandler: [requireUser],
+    schema: {
+      tags: ['mfa'],
+      summary: "List the current user's passkeys",
+      security: [{ bearerAuth: [] }],
+      response: { 200: z.array(passkeyItem), 401: errorResponse },
+    },
+    handler: async (req) => {
+      const me = currentUser(req);
+      return listPasskeys(me.id);
+    },
+  });
+
+  const passkeyDeleteParams = z.object({ id: z.string().uuid() });
+  r.route({
+    method: 'DELETE',
+    url: '/v1/mfa/passkey/:id',
+    preHandler: [requireUser],
+    schema: {
+      tags: ['mfa'],
+      summary: 'Remove a passkey',
+      security: [{ bearerAuth: [] }],
+      params: passkeyDeleteParams,
+      response: authedNoContentResponses,
+    },
+    handler: async (req, reply) => {
+      const me = currentUser(req);
+      const { id } = req.params as z.infer<typeof passkeyDeleteParams>;
+      await deletePasskey(me.id, id, ctxFrom(req));
+      return reply.code(204).send(null);
+    },
+  });
+
+  // Login via passkey: replaces password+MFA with a single signed assertion.
+  // Public + veryStrict rate-limited like the password login.
+  r.route({
+    method: 'POST',
+    url: '/v1/login/passkey/start',
+    config: veryStrict,
+    schema: {
+      tags: ['auth'],
+      summary: 'Begin passkey login (returns WebAuthn request options)',
+      response: { 200: passkeyOptionsResponse },
+    },
+    handler: async () => {
+      const result = await startPasskeyLogin();
+      return { options: result.options, challenge_token: result.challengeToken };
+    },
+  });
+
+  const passkeyLoginVerifyBody = z.object({
+    challenge_token: z.string().min(1).max(2048),
+    response: z.unknown(), // AuthenticationResponseJSON, validated by simplewebauthn
+  });
+  r.route({
+    method: 'POST',
+    url: '/v1/login/passkey',
+    config: veryStrict,
+    schema: {
+      tags: ['auth'],
+      summary: 'Complete passkey login and receive a session',
+      body: passkeyLoginVerifyBody,
+      response: { 200: tokenResponse, 400: errorResponse, 401: errorResponse },
+    },
+    handler: async (req, reply) => {
+      const body = req.body as z.infer<typeof passkeyLoginVerifyBody>;
+      const session = await verifyPasskeyLogin({
+        challengeToken: body.challenge_token,
+        response: body.response as Parameters<typeof verifyPasskeyLogin>[0]['response'],
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+      return reply.code(200).send(tokenPayload(session));
     },
   });
 

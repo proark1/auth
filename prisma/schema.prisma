@@ -88,7 +88,7 @@ model Session {
 
 enum MfaType {
   TOTP
-  WEBAUTHN  // passkeys (phase 2, schema reserved)
+  WEBAUTHN  // passkeys
 }
 
 model MfaFactor {
@@ -102,10 +102,23 @@ model MfaFactor {
   // TOTP: encrypted shared secret (encrypt at rest with KMS/app key)
   totpSecretEnc Bytes?
 
-  // WebAuthn (reserved for phase 2)
-  credentialId  Bytes?  @unique
+  // WebAuthn / passkey fields. Populated only when type = WEBAUTHN.
+  //   - credentialId: opaque per-credential identifier returned by the
+  //     authenticator. Stored as bytes; matched on auth via the authenticator's
+  //     `id` field decoded from base64url.
+  //   - publicKey: COSE-encoded public key used to verify assertion signatures.
+  //   - signCount: monotonic counter the authenticator increments per use;
+  //     server rejects auth if the value goes backwards (clone detection).
+  //   - transports: hints the browser uses to filter / prefer authenticators
+  //     when rendering the credential picker (usb, internal, hybrid, …).
+  //   - aaguid: 16-byte authenticator model identifier (Yubico, iCloud
+  //     Keychain, Google Password Manager, …). Useful for friendly device
+  //     labels but not required for verification.
+  credentialId  Bytes?    @unique
   publicKey     Bytes?
-  signCount     Int?    @default(0)
+  signCount     Int?      @default(0)
+  transports    String[]  @default([])
+  aaguid        String?
 
   confirmedAt DateTime?  // null until user proves they can use it
   createdAt   DateTime   @default(now())

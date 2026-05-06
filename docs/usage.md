@@ -302,6 +302,76 @@ Each code is single-use; consumed codes can never be replayed.
 
 ---
 
+## 3a. Passkeys (WebAuthn)
+
+A passkey replaces password+MFA with a single signed assertion from a
+device the user already trusts (Face ID, Touch ID, Windows Hello, a
+hardware key). The client handles all UI via `@simplewebauthn/browser`;
+the server only sees the signed responses.
+
+### Enroll a passkey (authenticated)
+
+```sh
+# Step 1: ask the server for WebAuthn registration options.
+curl -sS -X POST $BASE/v1/mfa/passkey/register/start \
+  -H "authorization: Bearer $ACCESS" -H 'content-type: application/json' -d '{}'
+# → 200
+# {
+#   "options": { /* PublicKeyCredentialCreationOptionsJSON */ },
+#   "challenge_token": "eyJ…"
+# }
+```
+
+Pass `options` to `startRegistration()` from `@simplewebauthn/browser`.
+Send the resulting response (along with the unchanged `challenge_token`)
+back:
+
+```sh
+curl -sS -X POST $BASE/v1/mfa/passkey/register/verify \
+  -H "authorization: Bearer $ACCESS" -H 'content-type: application/json' \
+  -d '{
+    "challenge_token":"…",
+    "response": { /* RegistrationResponseJSON from the browser */ },
+    "label":"My iPhone"
+  }'
+# → 200 { "factor_id":"…" }
+```
+
+### List passkeys
+
+```sh
+curl -sS $BASE/v1/mfa/passkeys -H "authorization: Bearer $ACCESS"
+# → 200 [{"id":"…","label":"My iPhone","aaguid":"…","transports":["internal","hybrid"], …}]
+```
+
+### Remove a passkey
+
+```sh
+curl -sS -X DELETE "$BASE/v1/mfa/passkey/$FACTOR_ID" -H "authorization: Bearer $ACCESS"
+# → 204
+```
+
+### Log in with a passkey (no password)
+
+```sh
+# Step 1: get authentication options. No user identifier — the browser's
+# credential picker discloses the right one.
+curl -sS -X POST $BASE/v1/login/passkey/start
+# → 200 { "options": { … }, "challenge_token": "eyJ…" }
+
+# Step 2: pass options to startAuthentication() in the browser, then post
+# the assertion back with the unchanged challenge_token.
+curl -sS -X POST $BASE/v1/login/passkey \
+  -H 'content-type: application/json' \
+  -d '{"challenge_token":"…","response": { /* AuthenticationResponseJSON */ }}'
+# → 200 (full token pair, same shape as password login)
+```
+
+A passkey login ends with the same access+refresh pair as `/v1/login`,
+so downstream services see no difference.
+
+---
+
 ## 4. Session management
 
 ### List active sessions
