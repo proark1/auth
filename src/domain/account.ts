@@ -183,10 +183,14 @@ export async function exportUserData(userId: string): Promise<UserDataExport> {
       orderBy: { createdAt: 'desc' },
       select: { id: true, type: true, expiresAt: true, usedAt: true, createdAt: true },
     }),
+    // GDPR Article 15 obliges us to disclose everything we hold; silently
+    // truncating the audit log would be a compliance gap. If a user has so
+    // many events that this becomes a memory/perf issue, the right answer is
+    // to switch to an async export (background job emails a download link),
+    // not to cap the result here.
     prisma.auditEvent.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
-      take: 5000,
       select: {
         id: true,
         event: true,
