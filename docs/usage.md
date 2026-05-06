@@ -462,9 +462,18 @@ Subsequent tokens, emails, and reset links for that user automatically use
 the same client's settings because `User.registeredClientId` was recorded on
 registration.
 
-If no service token is attached, register still works and falls back to the
-global `JWT_AUDIENCE` / `WEB_BASE_URL` / `EMAIL_SERVICE_FROM` — existing
-public callers are unaffected.
+**Two distinct contracts on `POST /v1/register`:**
+
+- **With** a valid s2s token: duplicates return **409 `email_taken`** so
+  the integrator can render "this email is already registered, sign in
+  instead". Tokens, emails, and reset links use the client's `audience` /
+  `webBaseUrl` / `fromAddress`.
+- **Without** a token: always 202 (enumeration-safe), and the email falls
+  back to the auth service's own `JWT_AUDIENCE` / `WEB_BASE_URL` /
+  `EMAIL_SERVICE_FROM`. Operators who want to forbid this fallback can
+  set `REGISTER_REQUIRE_SERVICE_TOKEN=true` on the auth service — the
+  endpoint then rejects unauthenticated callers with **401
+  `service_token_required`** instead of silently using global defaults.
 
 Configure these fields when creating the client (`npm run create-client
 --audience=… --web-base-url=…`) or via the admin endpoints
@@ -511,15 +520,108 @@ audience** (fetched once from `/v1/clients/me`, see § 5). Each consumer's
 audience is distinct, so an HR-issued token does not validate at onetab.ai
 even though both share the same issuer and JWKS.
 
+### 6.1 Token claim contract
+
+Three token shapes leave this service. The signing algorithm is **EdDSA
+(Ed25519)** — set `algorithms: ['EdDSA']` on your verifier; do not allow
+others.
+
+**End-user access token** (`POST /v1/login`, `/v1/token/refresh`, etc.):
+
+| Claim            | Type                | Notes                                                                |
+|------------------|---------------------|----------------------------------------------------------------------|
+| `iss`            | string (URL)        | Auth-service `JWT_ISSUER`. Pin to discovery's `issuer`.              |
+| `aud`            | string              | Per-`ServiceClient` audience, or `JWT_AUDIENCE` fallback. Free-form. |
+| `sub`            | string (UUID)       | User id.                                                             |
+| `exp`, `iat`     | number (epoch sec)  | TTL = `ACCESS_TOKEN_TTL_SECONDS` (default 900s = 15 min).            |
+| `jti`            | string (UUID)       | Unique per token.                                                    |
+| `typ`            | `"access"`          | Always `"access"` for this token; reject other values.               |
+| `email`          | string \| absent    | Present when known.                                                  |
+| `email_verified` | boolean \| absent   | Present when `email` is.                                             |
+| `roles`          | string[]            | Always present, possibly empty. Possible values: `"admin"`, `"user"`.|
+| `org_id`         | string \| absent    | Present only when the user belongs to an organisation.               |
+
+There is **no** `name` claim and **no** `is_super_admin` claim. Admin status
+is signalled by `roles.includes("admin")`. If you need additional profile
+fields, fetch them from `GET /v1/me` after verifying the token — extra JWT
+claims are not part of the contract and may be added behind a versioned
+namespace if/when needed (e.g. `https://schemas.auth.example.com/...`).
+
+**Service token** (`POST /v1/oauth/token` with `grant_type=client_credentials`):
+
+| Claim   | Type        | Notes                                                  |
+|---------|-------------|--------------------------------------------------------|
+| `iss`   | string      | Same as user tokens.                                   |
+| `aud`   | `"service"` | Literal string `"service"` — **never** a per-client audience. Treat any other value as a non-service token.|
+| `sub`   | string      | The `client_id` (e.g. `svc_abc123`).                   |
+| `exp`, `iat`, `jti` | …    | TTL = 3600s (1 hour). Cache for ≤ 50 min before re-issuing. |
+| `typ`   | `"service"` | Reject other values.                                   |
+| `scope` | string      | Space-separated. Empty string when no scopes granted.  |
+
+**MFA challenge token** (`mfa_token` returned by `POST /v1/login` when MFA is
+required, consumed by `/v1/login/mfa`): `typ: "mfa"`, 5-minute TTL. Treat as
+opaque — never decode it client-side; only relay it back.
+
+### 6.2 Audience format
+
+`audience` is a **free-form string**, opaque to the auth service. It is
+chosen by whoever creates the `ServiceClient` (`--audience=…` on
+`npm run create-client`) and is the security boundary between tenants.
+
+- It is **always a single string**, never an array, never a URI/URN unless
+  the operator chose one.
+- It is **case-sensitive** and exact-match only.
+- A common convention is the consumer's bare hostname without dots (e.g.
+  `ourteammanagementcom`), but anything stable works.
+- If a `ServiceClient` is created without `--audience`, tokens fall back to
+  the auth service's global `JWT_AUDIENCE`. **Don't rely on that** — set a
+  per-client audience or two clients will share the same `aud`.
+
+Pin your verifier to your single audience string — `jose`'s
+`audience: 'ourteammanagementcom'` parameter, for example.
+
+### 6.3 Key rotation
+
+JWKS keys have three states: `ACTIVE` (used to sign new tokens),
+`RETIRING` (still in JWKS so existing tokens verify), `RETIRED` (gone).
+
+- `GET /.well-known/jwks.json` returns `ACTIVE + RETIRING` keys.
+- Rotation is operator-driven via `POST /v1/admin/keys/rotate` — there is
+  no fixed automatic cadence yet. After rotation, demoted keys remain in
+  the JWKS until manually marked `RETIRED`, so any in-flight access token
+  (max age = `ACCESS_TOKEN_TTL_SECONDS`, default 15 min) keeps verifying.
+- Verifying services should **cache JWKS for at most 5 minutes**. The
+  signing key for a given token is selected via the JWT header's `kid`,
+  so a rotation event surfaces as one cache miss followed by a re-fetch —
+  no token rejection.
+- `jose`'s `createRemoteJWKSet` defaults are sensible (5-minute cooldown,
+  6-hour cache); an inline `jsonwebtoken` + `jwks-rsa` setup should pass
+  `cacheMaxAge: 5 * 60 * 1000`.
+
 ---
 
 ## 7. Errors
 
-All errors share this shape:
+### 7.1 Canonical error envelope
+
+Every non-2xx response (including those produced by the framework's request
+validator) uses **this exact shape** — there is no nested `error.*` object:
 
 ```json
-{ "code": "invalid_credentials", "message": "…", "issues": [ … ] }
+{
+  "code": "invalid_credentials",
+  "message": "human-readable, may change",
+  "issues": [ /* Zod issues; only on 400 schema-validation failures */ ]
+}
 ```
+
+- `code` — **stable string identifier**. Safe for clients to switch on.
+- `message` — human-readable explanation. May change between versions; do
+  not pattern-match.
+- `issues` — present **only** on 400s emitted by the request validator.
+  Each item is the Zod issue shape (`{ code, path, message, … }`).
+
+### 7.2 Status codes
 
 | status | meaning                                                   |
 |--------|-----------------------------------------------------------|
@@ -527,12 +629,41 @@ All errors share this shape:
 | 401    | bad credentials, missing/expired bearer, replayed refresh |
 | 403    | authenticated but not allowed                             |
 | 404    | resource not found                                        |
-| 409    | conflict (e.g. TOTP already enrolled)                     |
+| 409    | conflict (e.g. `email_taken`, `mfa_already_enrolled`)     |
 | 429    | rate limited                                              |
 | 500    | unhandled — please file a bug                             |
 
 `POST /v1/login`, `POST /v1/register`, and `POST /v1/password/forgot` are
 behind the strictest rate limits.
+
+### 7.3 Stable error codes by endpoint
+
+Codes in **bold** are the ones an integrator typically branches on. Anything
+not listed defaults to `invalid_request` (400) for schema failures or
+`internal_error` (500) for the catch-all.
+
+| Endpoint                  | Code                     | Status | Meaning                                                       |
+|---------------------------|--------------------------|--------|---------------------------------------------------------------|
+| `POST /v1/register`       | **`email_taken`**        | 409    | Service-authenticated caller only — duplicate email           |
+| `POST /v1/register`       | `service_token_required` | 401    | `REGISTER_REQUIRE_SERVICE_TOKEN=true` and no s2s bearer       |
+| `POST /v1/register`       | `compromised_password`   | 400    | HIBP found the password in a breach corpus                    |
+| `POST /v1/register`       | `weak_password`          | 400    | Below minimum length / complexity                             |
+| `POST /v1/email/verify`   | **`invalid_token`**      | 400    | Wrong / expired / already-used token                          |
+| `POST /v1/email/change/*` | `email_in_use`           | 409    | New address already registered                                |
+| `POST /v1/login`          | **`invalid_credentials`**| 401    | Wrong email or password                                       |
+| `POST /v1/login`          | **`account_locked`**     | 423    | Too many bad attempts                                         |
+| `POST /v1/login`          | `email_not_verified`     | 403    | User exists, password ok, but email isn't verified yet        |
+| `POST /v1/login`          | `account_disabled`       | 403    | Admin disabled the account                                    |
+| `POST /v1/login/mfa`      | **`invalid_code`**       | 401    | Wrong / expired TOTP or backup code                           |
+| `POST /v1/token/refresh`  | **`invalid_token`**      | 401    | Refresh token unknown, replayed, or revoked                   |
+| `POST /v1/password/reset` | `invalid_token`          | 400    | Wrong / expired / already-used token                          |
+| `POST /v1/oauth/token`    | **`invalid_client`**     | 401    | Wrong `client_id` / `client_secret`                           |
+| `POST /v1/oauth/token`    | `invalid_scope`          | 403    | Requested scope outside the client's allowed set              |
+| Any MFA enroll/verify     | `invalid_factor`         | 400    | Factor id doesn't belong to the user / wrong type             |
+| Any authed endpoint       | `unauthorized`           | 401    | Missing / invalid bearer                                      |
+| Any authed endpoint       | `forbidden`              | 403    | Authed but lacks the required role / scope                    |
+| Any endpoint              | `invalid_request`        | 400    | Schema validation failed (`issues` populated)                 |
+| Any endpoint              | `internal_error`         | 500    | Unhandled exception                                           |
 
 ---
 

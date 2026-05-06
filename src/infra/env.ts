@@ -82,6 +82,18 @@ const schema = z.object({
   WEBAUTHN_RP_ID: z.string().min(1).optional(),
   WEBAUTHN_RP_NAME: z.string().min(1).default('Auth Service'),
   WEBAUTHN_ORIGINS: z.string().min(1).optional(),
+
+  // When true, POST /v1/register rejects callers without a valid service
+  // token (401 unauthorized). Default false: existing public callers still
+  // work and fall back to the global JWT_AUDIENCE / WEB_BASE_URL /
+  // EMAIL_SERVICE_FROM. Turn on once every integrator forwards their s2s
+  // token — prevents the silent-fallback footgun where a misconfigured
+  // integrator ships verification emails branded with the auth service's
+  // own domain instead of theirs.
+  REGISTER_REQUIRE_SERVICE_TOKEN: z
+    .string()
+    .optional()
+    .transform((v) => v?.toLowerCase() === 'true' || v === '1'),
 });
 
 export type Env = z.infer<typeof schema>;
