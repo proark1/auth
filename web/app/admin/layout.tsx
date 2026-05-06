@@ -13,7 +13,7 @@ const links = [
 export default async function AdminLayout({ children }: { children: ReactNode }) {
   const session = await requireAdminSession();
   return (
-    <DashboardShell email={session.email} isAdmin={session.isAdmin} links={links}>
+    <DashboardShell email={session.email} isAdmin={session.isAdmin} area="admin" links={links}>
       {children}
     </DashboardShell>
   );
