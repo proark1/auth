@@ -61,6 +61,22 @@ export function currentUser(req: FastifyRequest): AuthedUser {
   return req.user;
 }
 
+// Admin-only gate. Composes requireUser, then checks the `admin` role on the
+// access-token claim. We trust the JWT here (signed by us, refreshed at most
+// every 15 min via access-token TTL); a role demoted in the DB still has up to
+// access-token-TTL of effective access until the next refresh-token rotation.
+// For instant revocation, also call /v1/admin/users/:id/sessions/revoke-all
+// after the role change so the demoted user is forced to re-auth.
+export const ADMIN_ROLE = 'admin';
+
+export async function requireAdmin(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  await requireUser(req, reply);
+  const me = currentUser(req);
+  if (!me.roles.includes(ADMIN_ROLE)) {
+    throw new AppError(403, 'forbidden', 'admin role required');
+  }
+}
+
 // Service-token equivalent of requireUser. Rejects user tokens — services
 // must use the client_credentials grant to get a typ='service' token.
 export async function requireService(req: FastifyRequest, _reply: FastifyReply): Promise<void> {

@@ -205,10 +205,19 @@ export async function completeMfaLogin(input: CompleteMfaInput): Promise<IssuedS
     data: { lastUsedAt: new Date() },
   });
 
+  // Re-fetch the user to pick up the latest roles for the JWT — the row read
+  // at the start of completeMfaLogin came in via resolveMfaChallenge which
+  // selects a narrow shape.
+  const fresh = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { roles: true },
+  });
+
   const session = await issueSession({
     userId,
     email: user.email,
     emailVerified: !!user.emailVerifiedAt,
+    roles: fresh?.roles ?? [],
     ip: input.ip,
     userAgent: input.userAgent,
   });

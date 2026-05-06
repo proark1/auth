@@ -16,6 +16,7 @@
     "prisma:generate": "prisma generate",
     "openapi:dump": "tsx src/scripts/dumpOpenapi.ts",
     "create-client": "tsx src/scripts/createClient.ts",
+    "grant-admin": "tsx src/scripts/grantAdmin.ts",
     "mcp": "tsx src/mcp/server.ts",
     "mcp:start": "node dist/mcp/server.js"
   },

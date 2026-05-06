@@ -199,6 +199,69 @@ curl -sS -X DELETE "$BASE/v1/sessions/$SESSION_ID" \
 
 ---
 
+## 4a. Admin API
+
+All admin endpoints require an access token whose `roles` claim contains
+`"admin"`. Bootstrap the first admin via `npm run grant-admin --
+--email=…` (see README); manage subsequent admins through this API.
+
+### List users
+
+```sh
+curl -sS "$BASE/v1/admin/users?email=alice&status=ACTIVE&limit=20" \
+  -H "authorization: Bearer $ACCESS"
+# → 200 { users: [...], total: 42, limit: 20, offset: 0 }
+```
+
+Filters: `email` (case-insensitive substring), `status`, `role`. Pagination
+via `limit` (default 50, max 200) and `offset`.
+
+### Get full user detail
+
+```sh
+curl -sS "$BASE/v1/admin/users/$USER_ID" -H "authorization: Bearer $ACCESS"
+# → 200 (summary fields + mfaFactors[], activeSessionCount)
+```
+
+### Update status / roles
+
+```sh
+curl -sS -X PATCH "$BASE/v1/admin/users/$USER_ID" \
+  -H "authorization: Bearer $ACCESS" -H 'content-type: application/json' \
+  -d '{"roles":["admin","support"]}'
+# → 204
+
+curl -sS -X PATCH "$BASE/v1/admin/users/$USER_ID" \
+  -H "authorization: Bearer $ACCESS" -H 'content-type: application/json' \
+  -d '{"status":"DISABLED"}'
+# → 204    # also revokes every active session
+```
+
+An admin cannot drop their own `admin` role — another admin must do it.
+
+### Force logout (revoke all sessions)
+
+```sh
+curl -sS -X POST "$BASE/v1/admin/users/$USER_ID/sessions/revoke-all" \
+  -H "authorization: Bearer $ACCESS"
+# → 200 { "revoked": 3 }
+```
+
+Useful after a role change: existing access tokens stay admin-capable
+until they expire (≤ 15 min) or sessions are revoked.
+
+### Read a user's audit log
+
+```sh
+curl -sS "$BASE/v1/admin/users/$USER_ID/audit?limit=50" \
+  -H "authorization: Bearer $ACCESS"
+# → 200 [{ id, event, ip, userAgent, metadata, createdAt }, ...]
+```
+
+Paginate by passing `before=<createdAt>` from the last item.
+
+---
+
 ## 5. Service-to-service (OAuth2 client_credentials)
 
 For machine clients (HR system, email worker, meeting bot, …). Provision a

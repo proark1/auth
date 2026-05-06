@@ -21,7 +21,19 @@ import {
   revokeSessionById,
   listSessions,
 } from '../domain/sessions.js';
-import { requireUser, currentUser, attachServiceIfPresent } from '../middleware/auth.js';
+import {
+  requireUser,
+  currentUser,
+  attachServiceIfPresent,
+  requireAdmin,
+} from '../middleware/auth.js';
+import {
+  listUsers,
+  getUserDetail,
+  updateUser,
+  revokeAllSessions,
+  getUserAuditLog,
+} from '../domain/admin.js';
 import { prisma } from '../infra/db.js';
 import { AppError } from '../middleware/errors.js';
 
@@ -618,6 +630,186 @@ export async function registerRoutes(app: AppInstance) {
       const { id } = req.params as z.infer<typeof sessionParams>;
       await revokeSessionById(id, me.id);
       return reply.code(204).send(null);
+    },
+  });
+
+  // --- Admin API ---
+  // Gated by the 'admin' role on the access token. Bootstrap the first admin
+  // out of band via `npm run grant-admin -- --email=you@example.com`.
+  // Every mutation emits an audit event tagged with the actor.
+
+  const adminCtxFrom = (req: FastifyRequest) => ({
+    actorId: currentUser(req).id,
+    ip: req.ip,
+    userAgent: req.headers['user-agent'],
+  });
+
+  const adminUserSummary = z.object({
+    id: z.string().uuid(),
+    email: z.string().email(),
+    status: z.string(),
+    emailVerified: z.boolean(),
+    roles: z.array(z.string()),
+    failedLoginCount: z.number().int(),
+    lockedUntil: z.string().datetime().nullable(),
+    createdAt: z.string().datetime(),
+  });
+  const adminUserListQuery = z.object({
+    email: z.string().max(254).optional(),
+    status: z.enum(['PENDING', 'ACTIVE', 'DISABLED', 'LOCKED']).optional(),
+    role: z.string().max(64).optional(),
+    limit: z.coerce.number().int().min(1).max(200).optional(),
+    offset: z.coerce.number().int().min(0).optional(),
+  });
+  r.route({
+    method: 'GET',
+    url: '/v1/admin/users',
+    preHandler: [requireAdmin],
+    schema: {
+      tags: ['admin'],
+      summary: 'List users (paginated, filterable)',
+      security: [{ bearerAuth: [] }],
+      querystring: adminUserListQuery,
+      response: {
+        200: z.object({
+          users: z.array(adminUserSummary),
+          total: z.number().int(),
+          limit: z.number().int(),
+          offset: z.number().int(),
+        }),
+        401: errorResponse,
+        403: errorResponse,
+      },
+    },
+    handler: async (req) => {
+      const q = req.query as z.infer<typeof adminUserListQuery>;
+      return listUsers(q);
+    },
+  });
+
+  const adminUserParams = z.object({ id: z.string().uuid() });
+  r.route({
+    method: 'GET',
+    url: '/v1/admin/users/:id',
+    preHandler: [requireAdmin],
+    schema: {
+      tags: ['admin'],
+      summary: 'Get full user detail (sessions, MFA factors, status)',
+      security: [{ bearerAuth: [] }],
+      params: adminUserParams,
+      response: {
+        200: adminUserSummary.extend({
+          registeredClientId: z.string().uuid().nullable(),
+          mfaFactors: z.array(
+            z.object({
+              id: z.string().uuid(),
+              type: z.string(),
+              label: z.string().nullable(),
+              confirmedAt: z.string().datetime().nullable(),
+              lastUsedAt: z.string().datetime().nullable(),
+            }),
+          ),
+          activeSessionCount: z.number().int(),
+        }),
+        401: errorResponse,
+        403: errorResponse,
+        404: errorResponse,
+      },
+    },
+    handler: async (req) => {
+      const { id } = req.params as z.infer<typeof adminUserParams>;
+      return getUserDetail(id);
+    },
+  });
+
+  const adminUserUpdateBody = z.object({
+    status: z.enum(['ACTIVE', 'DISABLED']).optional(),
+    roles: z.array(z.string().max(64)).max(32).optional(),
+  });
+  r.route({
+    method: 'PATCH',
+    url: '/v1/admin/users/:id',
+    preHandler: [requireAdmin],
+    schema: {
+      tags: ['admin'],
+      summary: 'Update a user (status / roles)',
+      description:
+        'Setting status=DISABLED also revokes every active session for the user. ' +
+        'An admin cannot drop their own admin role — another admin must do it.',
+      security: [{ bearerAuth: [] }],
+      params: adminUserParams,
+      body: adminUserUpdateBody,
+      response: {
+        204: z.null(),
+        400: errorResponse,
+        401: errorResponse,
+        403: errorResponse,
+        404: errorResponse,
+      },
+    },
+    handler: async (req, reply) => {
+      const { id } = req.params as z.infer<typeof adminUserParams>;
+      const body = req.body as z.infer<typeof adminUserUpdateBody>;
+      await updateUser(id, body, adminCtxFrom(req));
+      return reply.code(204).send(null);
+    },
+  });
+
+  r.route({
+    method: 'POST',
+    url: '/v1/admin/users/:id/sessions/revoke-all',
+    preHandler: [requireAdmin],
+    schema: {
+      tags: ['admin'],
+      summary: 'Revoke every active session for a user (force re-auth)',
+      security: [{ bearerAuth: [] }],
+      params: adminUserParams,
+      response: {
+        200: z.object({ revoked: z.number().int() }),
+        401: errorResponse,
+        403: errorResponse,
+      },
+    },
+    handler: async (req) => {
+      const { id } = req.params as z.infer<typeof adminUserParams>;
+      const revoked = await revokeAllSessions(id, adminCtxFrom(req));
+      return { revoked };
+    },
+  });
+
+  const adminAuditQuery = z.object({
+    limit: z.coerce.number().int().min(1).max(200).optional(),
+    before: z.coerce.date().optional(),
+  });
+  r.route({
+    method: 'GET',
+    url: '/v1/admin/users/:id/audit',
+    preHandler: [requireAdmin],
+    schema: {
+      tags: ['admin'],
+      summary: "Get a user's audit-log events (most recent first)",
+      security: [{ bearerAuth: [] }],
+      params: adminUserParams,
+      querystring: adminAuditQuery,
+      response: {
+        200: z.array(
+          z.object({
+            id: z.string().uuid(),
+            event: z.string(),
+            ip: z.string().nullable(),
+            userAgent: z.string().nullable(),
+            metadata: z.unknown(),
+            createdAt: z.string().datetime().or(z.date()),
+          }),
+        ),
+        401: errorResponse,
+        403: errorResponse,
+      },
+    },
+    handler: async (req) => {
+      const { id } = req.params as z.infer<typeof adminUserParams>;
+      const q = req.query as z.infer<typeof adminAuditQuery>;
+      return getUserAuditLog(id, q);
     },
   });
 }

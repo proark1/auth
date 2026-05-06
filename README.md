@@ -20,6 +20,7 @@ API-first authentication service for internal platform (HR, email, meeting bot, 
 5. JWKS endpoint + key rotation
 6. Audit log on every auth event
 7. Rate limiting on all public endpoints
+8. Admin API (list/disable users, role assignment, force logout, audit log)
 
 ## Out of scope for MVP
 - OAuth2 authorization server (third-party apps) — add Ory Hydra later if needed
@@ -92,6 +93,23 @@ npm install
 npm run prisma:migrate
 npm run dev
 ```
+
+## Bootstrapping the first admin
+
+The admin API is gated by the `admin` role. Since the role is granted via
+the admin API itself (chicken/egg), the very first admin is provisioned
+out of band:
+
+```sh
+npm run grant-admin -- --email=you@example.com
+# → granted admin role to you@example.com
+```
+
+After that, subsequent admins are managed via
+`PATCH /v1/admin/users/:id` with `{ "roles": [...] }`. To revoke the
+role, pass `--revoke`. Existing access tokens stay admin-capable until
+they expire (≤ 15 min) or sessions are revoked, so for instant
+demotion combine with `POST /v1/admin/users/:id/sessions/revoke-all`.
 
 ## Deployment (Railway)
 - One Railway project, three components: `auth-service` (this repo, Dockerfile build), Postgres plugin, Redis plugin.

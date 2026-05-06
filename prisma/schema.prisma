@@ -31,6 +31,12 @@ model User {
   failedLoginCount Int       @default(0)
   lockedUntil      DateTime?
 
+  // Coarse-grained roles stamped into the access token's `roles` claim and
+  // consulted by requireAdmin for the admin API. Granular per-service
+  // permissions are intentionally kept out of the JWT (resolved per-service
+  // from a shared config) to keep tokens small.
+  roles            String[]  @default([])
+
   // Which service the user originally registered through. Drives email
   // branding (from address, subject) on verification and password-reset.
   // Null = registered without a service token; emails fall back to global.

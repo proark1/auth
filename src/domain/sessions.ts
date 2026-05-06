@@ -9,6 +9,10 @@ export interface IssueSessionInput {
   userId: string;
   email: string;
   emailVerified: boolean;
+  // Stamped into the access token's `roles` claim. Each session re-fetches
+  // the user's current roles so a privilege change takes effect on the next
+  // refresh-token rotation (≤ refresh-token TTL latency, currently 30 days).
+  roles?: string[] | undefined;
   ip?: string | undefined;
   userAgent?: string | undefined;
 }
@@ -41,6 +45,7 @@ export async function issueSession(input: IssueSessionInput): Promise<IssuedSess
     sub: input.userId,
     email: input.email,
     emailVerified: input.emailVerified,
+    ...(input.roles !== undefined ? { roles: input.roles } : {}),
   });
 
   return { accessToken, refreshToken, refreshTokenExpiresAt: expiresAt, sessionId: session.id };
@@ -81,6 +86,7 @@ export async function rotateSession(refreshTokenPlain: string, ctx: RotateCtx = 
     userId: user.id,
     email: user.email,
     emailVerified: !!user.emailVerifiedAt,
+    roles: user.roles,
     ip: ctx.ip,
     userAgent: ctx.userAgent,
   });

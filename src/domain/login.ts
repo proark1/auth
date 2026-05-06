@@ -111,6 +111,7 @@ export async function login(input: LoginInput, ctx: LoginCtx = {}): Promise<Logi
     userId: user.id,
     email: user.email,
     emailVerified: !!user.emailVerifiedAt,
+    roles: user.roles,
     ip: ctx.ip,
     userAgent: ctx.userAgent,
   });
