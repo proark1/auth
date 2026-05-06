@@ -46,19 +46,12 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-<<<<<<< HEAD
-  sessions       Session[]
-  mfaFactors     MfaFactor[]
-  mfaBackupCodes MfaBackupCode[]
-  emailTokens    EmailToken[]
-  auditEvents    AuditEvent[]
-=======
   sessions             Session[]
   mfaFactors           MfaFactor[]
+  mfaBackupCodes       MfaBackupCode[]
   emailTokens          EmailToken[]
   emailChangeRequests  EmailChangeRequest[]
   auditEvents          AuditEvent[]
->>>>>>> 7ff7d58 (Add authenticated email-change flow)
 
   @@index([status])
   @@index([role])

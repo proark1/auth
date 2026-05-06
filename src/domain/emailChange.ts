@@ -112,44 +112,55 @@ export async function confirmEmailChange(
   const row = await prisma.emailChangeRequest.findUnique({ where: { tokenHash } });
   if (!row || row.usedAt || row.expiresAt < new Date()) throw invalid;
 
-  // Re-check the destination address isn't taken between request and confirm.
-  // A user could have raced: alice requests change to bob@…, bob registers in
-  // the meantime, alice confirms. Without this check we'd corrupt state.
-  const collision = await prisma.user.findUnique({ where: { email: row.newEmail } });
-  if (collision && collision.id !== row.userId) {
-    await prisma.emailChangeRequest.update({
-      where: { id: row.id },
-      data: { usedAt: new Date() },
-    });
-    await audit({
-      event: 'email.change.fail.email_in_use_at_confirm',
-      userId: row.userId,
-      ...ctx,
-      metadata: { newEmail: row.newEmail },
-    });
-    throw new AppError(409, 'email_in_use', 'that email is already in use');
-  }
-
+  // Interactive transaction: claim the token AND re-check the destination
+  // address inside one atomic context. Without this, two failure modes:
+  //   (a) two parallel confirms could both pass the early "usedAt is null"
+  //       check and both try to flip the email — second one would crash.
+  //   (b) someone could register `bob@…` between our pre-check and the
+  //       update, making prisma raise a P2002 unique-constraint error
+  //       (→ 500 to the caller) instead of our intended 409.
+  // The collision branch throws inside the tx so the token claim rolls back
+  // and the user can request a new change.
   const now = new Date();
-  await prisma.$transaction([
-    prisma.emailChangeRequest.update({
-      where: { id: row.id },
-      data: { usedAt: now },
-    }),
-    prisma.user.update({
-      where: { id: row.userId },
-      // The new address has just proven possession via this token, so it's
-      // verified as of now. Existing emailVerifiedAt would be stale (refers
-      // to the OLD address) — replace it.
-      data: { email: row.newEmail, emailVerifiedAt: now },
-    }),
-    // Email is the recovery path for password reset; rotating it should
-    // log the user out of every device so they re-authenticate fresh.
-    prisma.session.updateMany({
-      where: { userId: row.userId, revokedAt: null },
-      data: { revokedAt: now },
-    }),
-  ]);
+  const inUse = new AppError(409, 'email_in_use', 'that email is already in use');
+  try {
+    await prisma.$transaction(async (tx) => {
+      const claimed = await tx.emailChangeRequest.updateMany({
+        where: { id: row.id, usedAt: null },
+        data: { usedAt: now },
+      });
+      if (claimed.count === 0) throw invalid;
+
+      const collision = await tx.user.findUnique({ where: { email: row.newEmail } });
+      if (collision && collision.id !== row.userId) throw inUse;
+
+      await tx.user.update({
+        where: { id: row.userId },
+        // The new address has just proven possession via this token, so it's
+        // verified as of now. Existing emailVerifiedAt would be stale (refers
+        // to the OLD address) — replace it.
+        data: { email: row.newEmail, emailVerifiedAt: now },
+      });
+
+      // Email is the recovery path for password reset; rotating it should
+      // log the user out of every device so they re-authenticate fresh.
+      await tx.session.updateMany({
+        where: { userId: row.userId, revokedAt: null },
+        data: { revokedAt: now },
+      });
+    });
+  } catch (err) {
+    if (err === inUse) {
+      // Audit outside the tx so the entry survives the rollback.
+      await audit({
+        event: 'email.change.fail.email_in_use_at_confirm',
+        userId: row.userId,
+        ...ctx,
+        metadata: { newEmail: row.newEmail },
+      });
+    }
+    throw err;
+  }
 
   await audit({
     event: 'email.change.confirmed',
