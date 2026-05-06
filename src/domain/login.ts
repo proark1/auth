@@ -35,7 +35,10 @@ export async function login(input: LoginInput, ctx: LoginCtx = {}): Promise<Logi
   // Generic error — never reveal which of "no such email" vs "wrong password".
   const genericFail = new AppError(401, 'invalid_credentials', 'invalid email or password');
 
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await prisma.user.findUnique({
+    where: { email },
+    include: { registeredClient: { select: { audience: true } } },
+  });
   if (!user) {
     // Equalize timing with the wrong-password branch (~argon2.verify cost).
     // Otherwise the no-user branch returns ~50ms faster and leaks account
@@ -101,8 +104,10 @@ export async function login(input: LoginInput, ctx: LoginCtx = {}): Promise<Logi
   // If the user has a confirmed MFA factor, do NOT issue a session yet.
   // Hand back a short-lived MFA challenge token; the caller must complete
   // /v1/login/mfa with a valid TOTP code to receive tokens.
+  const audience = user.registeredClient?.audience ?? undefined;
+
   if (await userHasConfirmedMfa(user.id)) {
-    const mfaToken = await issueMfaChallenge(user.id);
+    const mfaToken = await issueMfaChallenge(user.id, audience);
     await audit({ event: 'login.mfa_required', userId: user.id, ...ctx });
     return { kind: 'mfa_required', mfaToken };
   }
@@ -112,6 +117,7 @@ export async function login(input: LoginInput, ctx: LoginCtx = {}): Promise<Logi
     email: user.email,
     emailVerified: !!user.emailVerifiedAt,
     role: user.role,
+    audience,
     ip: ctx.ip,
     userAgent: ctx.userAgent,
     registeredClientId: user.registeredClientId,

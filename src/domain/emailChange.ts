@@ -1,9 +1,8 @@
 import { prisma } from '../infra/db.js';
 import { audit } from '../infra/audit.js';
-import { sendEmail } from '../infra/email.js';
+import { sendEmail, resolveWebBaseUrl } from '../infra/email.js';
 import { verifyPassword } from '../crypto/password.js';
 import { generateToken, hashToken } from '../crypto/tokens.js';
-import { env } from '../infra/env.js';
 import { AppError } from '../middleware/errors.js';
 
 // Authenticated email-address change. The token goes to the *new* address —
@@ -80,7 +79,8 @@ export async function requestEmailChange(
     data: { userId: user.id, newEmail, tokenHash: hash, expiresAt },
   });
 
-  const link = `${env().WEB_BASE_URL.replace(/\/$/, '')}/email/change/confirm?token=${plaintext}`;
+  const base = await resolveWebBaseUrl(user.registeredClientId);
+  const link = `${base}/email/change/confirm?token=${plaintext}`;
   await sendEmail({
     to: newEmail,
     template: 'email_change',

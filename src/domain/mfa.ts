@@ -112,6 +112,7 @@ interface MfaChallengeUser {
   emailVerifiedAt: Date | null;
   role: import('@prisma/client').Role;
   registeredClientId: string | null;
+  audience: string | null;
 }
 
 // Shared preamble for both TOTP and backup-code completion paths: validate the
@@ -131,7 +132,10 @@ async function resolveMfaChallenge(
   if (claims.typ !== 'mfa') throw invalid;
 
   const userId = claims.sub;
-  const user = await prisma.user.findUnique({ where: { id: userId } });
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { registeredClient: { select: { audience: true } } },
+  });
   if (!user || user.status !== 'ACTIVE') throw invalid;
 
   if (user.lockedUntil && user.lockedUntil > new Date()) {
@@ -144,6 +148,7 @@ async function resolveMfaChallenge(
     emailVerifiedAt: user.emailVerifiedAt,
     role: user.role,
     registeredClientId: user.registeredClientId,
+    audience: user.registeredClient?.audience ?? null,
   };
 }
 
@@ -230,6 +235,7 @@ export async function completeMfaLogin(input: CompleteMfaInput): Promise<IssuedS
     email: user.email,
     emailVerified: !!user.emailVerifiedAt,
     role: user.role,
+    audience: user.audience ?? undefined,
     ip: input.ip,
     userAgent: input.userAgent,
     registeredClientId: user.registeredClientId,
@@ -281,8 +287,11 @@ export async function completeMfaLoginWithBackupCode(
     email: user.email,
     emailVerified: !!user.emailVerifiedAt,
     role: user.role,
+    audience: user.audience ?? undefined,
     ip: input.ip,
     userAgent: input.userAgent,
+    registeredClientId: user.registeredClientId,
+    loggedInVia: 'password+backup_code',
   });
 
   // Caller should be nudged to regenerate when codes run low; surface the

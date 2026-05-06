@@ -1,8 +1,7 @@
 import { prisma } from '../infra/db.js';
 import { audit } from '../infra/audit.js';
-import { sendEmail } from '../infra/email.js';
+import { sendEmail, resolveWebBaseUrl } from '../infra/email.js';
 import { generateToken, hashToken } from '../crypto/tokens.js';
-import { env } from '../infra/env.js';
 import { AppError } from '../middleware/errors.js';
 import { issueSession, type IssuedSession, type IssueSessionInput } from './sessions.js';
 import { userHasConfirmedMfa } from './mfa.js';
@@ -54,7 +53,8 @@ export async function requestMagicLink(emailIn: string, ctx: RequestCtx = {}): P
     data: { userId: user.id, type: 'LOGIN_MAGIC_LINK', tokenHash: hash, expiresAt },
   });
 
-  const link = `${env().WEB_BASE_URL.replace(/\/$/, '')}/login/magic?token=${plaintext}`;
+  const base = await resolveWebBaseUrl(user.registeredClientId);
+  const link = `${base}/login/magic?token=${plaintext}`;
   await sendEmail({
     to: email,
     template: 'magic_link',
@@ -90,7 +90,7 @@ export async function verifyMagicLink(
   // 423 response — they can re-click once the lockout passes.
   const row = await prisma.emailToken.findUnique({
     where: { tokenHash },
-    include: { user: true },
+    include: { user: { include: { registeredClient: { select: { audience: true } } } } },
   });
   if (
     !row ||
@@ -125,8 +125,10 @@ export async function verifyMagicLink(
     data: { failedLoginCount: 0, lockedUntil: null },
   });
 
+  const audience = user.registeredClient?.audience ?? undefined;
+
   if (await userHasConfirmedMfa(user.id)) {
-    const mfaToken = await issueMfaChallenge(user.id);
+    const mfaToken = await issueMfaChallenge(user.id, audience);
     await audit({ event: 'login.magic_link.mfa_required', userId: user.id, ...ctx });
     return { kind: 'mfa_required', mfaToken };
   }
@@ -136,6 +138,9 @@ export async function verifyMagicLink(
     email: user.email,
     emailVerified: !!user.emailVerifiedAt,
     role: user.role,
+    registeredClientId: user.registeredClientId,
+    loggedInVia: 'magic_link',
+    ...(audience ? { audience } : {}),
   };
   if (ctx.ip !== undefined) sessionInput.ip = ctx.ip;
   if (ctx.userAgent !== undefined) sessionInput.userAgent = ctx.userAgent;

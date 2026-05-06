@@ -170,3 +170,18 @@ export async function sendEmail(input: SendEmailInput): Promise<void> {
     }
   }
 }
+
+// Per-client web origin used when building links in outgoing emails. Falls
+// back to env.WEB_BASE_URL when the client has none configured (or the user
+// registered without a client).
+export async function resolveWebBaseUrl(clientId: string | null | undefined): Promise<string> {
+  const e = env();
+  if (clientId) {
+    const client = await prisma.serviceClient.findUnique({
+      where: { id: clientId },
+      select: { webBaseUrl: true },
+    });
+    if (client?.webBaseUrl) return client.webBaseUrl.replace(/\/$/, '');
+  }
+  return e.WEB_BASE_URL.replace(/\/$/, '');
+}

@@ -1,9 +1,8 @@
 import { prisma } from '../infra/db.js';
 import { audit } from '../infra/audit.js';
-import { sendEmail } from '../infra/email.js';
+import { sendEmail, resolveWebBaseUrl } from '../infra/email.js';
 import { verifyPassword } from '../crypto/password.js';
 import { generateToken, hashToken } from '../crypto/tokens.js';
-import { env } from '../infra/env.js';
 import { AppError } from '../middleware/errors.js';
 
 // Self-service account deletion (two-step confirm) and a GDPR data-export
@@ -50,7 +49,8 @@ export async function requestAccountDeletion(
     data: { userId, type: 'ACCOUNT_DELETION', tokenHash: hash, expiresAt },
   });
 
-  const link = `${env().WEB_BASE_URL.replace(/\/$/, '')}/account/delete/confirm?token=${plaintext}`;
+  const base = await resolveWebBaseUrl(user.registeredClientId);
+  const link = `${base}/account/delete/confirm?token=${plaintext}`;
   await sendEmail({
     to: user.email,
     template: 'account_deletion',

@@ -418,16 +418,27 @@ curl -sS -X POST $BASE/v1/oauth/token \
 The returned access token is a normal JWT. Verify it in your service against
 `/.well-known/jwks.json` — no callback to this service required.
 
-### Per-app email branding
+### Per-client tenant isolation and branding
 
-By default, `verify_email` and `password_reset` emails are sent from the
-global `EMAIL_SERVICE_FROM` with generic subjects. If a `ServiceClient` row
-has any of `fromAddress`, `verifyEmailSubject`, `passwordResetSubject` set,
-those values are used instead — but only for users who registered through
-that client.
+Each `ServiceClient` (HR, onetab.ai, …) is a tenant. The auth service
+isolates them via two per-client fields, both optional and falling back to
+global defaults when null:
 
-To "register through" a client, the client's backend forwards the user's
-register call with its own service-to-service access token attached:
+| Field          | What it controls                                     | Visibility        |
+|----------------|------------------------------------------------------|-------------------|
+| `audience`     | `aud` claim on access tokens for this client's users | Inside the JWT    |
+| `webBaseUrl`   | Origin used for verify / reset links in emails       | End user (email)  |
+| `fromAddress`  | `From:` of outgoing emails                           | End user (email)  |
+| `verifyEmailSubject` / `passwordResetSubject` | Email subjects     | End user (email)  |
+
+`audience` is the security boundary: each consumer validates `aud` against
+its **own** audience, so an HR-issued token cannot be replayed against
+onetab.ai (and vice versa) even though both validate the same `iss` and the
+same JWKS.
+
+A user is associated with a client by registering through it. The client's
+backend forwards the register call with its own service-to-service token
+attached:
 
 ```sh
 # 1. Service gets a token (as above)
@@ -443,21 +454,45 @@ curl -sS -X POST $BASE/v1/register \
   -d '{"email":"alice@example.com","password":"…"}'
 ```
 
-The `client_id` is read from the token's claims, never from the request body
-— a malicious caller cannot impersonate another service's `From` address
-without that service's `client_secret`.
+The `client_id` is read from the token's claims, never from the request
+body — a malicious caller cannot impersonate another service's audience or
+`From:` address without that service's `client_secret`.
 
-Subsequent emails for that user (verification resends, password resets) are
-automatically branded from the same client because `User.registeredClientId`
-was recorded on registration.
+Subsequent tokens, emails, and reset links for that user automatically use
+the same client's settings because `User.registeredClientId` was recorded on
+registration.
 
-If no service token is attached, register still works and falls back to
-global defaults — existing public callers are unaffected.
+If no service token is attached, register still works and falls back to the
+global `JWT_AUDIENCE` / `WEB_BASE_URL` / `EMAIL_SERVICE_FROM` — existing
+public callers are unaffected.
 
-To configure branding, set `fromAddress`, `verifyEmailSubject`, and/or
-`passwordResetSubject` directly on the `ServiceClient` row (any null field
-falls back to the global default). Sender domains must be verified in
+Configure these fields when creating the client (`npm run create-client
+--audience=… --web-base-url=…`) or via the admin endpoints
+(`POST/PATCH /v1/admin/clients`). Sender domains must be verified in
 mailnowapi separately.
+
+### Self-discovery (for the calling service)
+
+Integrators don't need to mirror `audience` (or any other config) in their
+own env vars. With a service token they can fetch their own public config:
+
+```sh
+curl -sS $BASE/v1/clients/me \
+  -H "authorization: Bearer $SERVICE_TOKEN"
+# → 200
+# {
+#   "clientId":"svc_abc123",
+#   "name":"HR Service",
+#   "scopes":["users:read"],
+#   "audience":"hr-service",
+#   "webBaseUrl":"https://hr.yourco.com"
+# }
+```
+
+Combined with `/.well-known/openid-configuration`, this means an integrating
+service only needs **two** env vars: `AUTH_API_URL` and its
+`AUTH_CLIENT_ID` / `AUTH_CLIENT_SECRET`. Issuer and audience are discovered
+at startup.
 
 ---
 
@@ -471,7 +506,10 @@ curl -sS $BASE/.well-known/jwks.json
 ```
 
 Wire them into a JWT library (e.g. `jose`, `jsonwebtoken` + `jwks-rsa`) and
-verify with `iss` = your `JWT_ISSUER` and `aud` = your `JWT_AUDIENCE`.
+verify with `iss` from the discovery doc and `aud` = **your client's
+audience** (fetched once from `/v1/clients/me`, see § 5). Each consumer's
+audience is distinct, so an HR-issued token does not validate at onetab.ai
+even though both share the same issuer and JWKS.
 
 ---
 

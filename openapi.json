@@ -3438,6 +3438,119 @@
         }
       }
     },
+    "/v1/clients/me": {
+      "get": {
+        "summary": "Public config for the calling service client",
+        "tags": [
+          "oauth"
+        ],
+        "description": "Returns the calling client's audience and other public config. Integrators fetch this at startup so they only need AUTH_API_URL + client credentials in env — issuer comes from /.well-known/openid-configuration, audience comes from here.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "clientId": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "scopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "audience": {
+                      "type": "string"
+                    },
+                    "webBaseUrl": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "clientId",
+                    "name",
+                    "scopes",
+                    "audience",
+                    "webBaseUrl"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {}
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {}
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/sessions": {
       "get": {
         "summary": "List active sessions for current user",
@@ -4778,6 +4891,26 @@
                           }
                         ]
                       },
+                      "audience": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "webBaseUrl": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "createdAt": {
                         "type": "string",
                         "format": "date-time",
@@ -4805,6 +4938,8 @@
                       "fromAddress",
                       "verifyEmailSubject",
                       "passwordResetSubject",
+                      "audience",
+                      "webBaseUrl",
                       "createdAt",
                       "lastUsedAt"
                     ],
@@ -4905,6 +5040,16 @@
                   "passwordResetSubject": {
                     "type": "string",
                     "maxLength": 200
+                  },
+                  "audience": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "webBaseUrl": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "format": "uri"
                   }
                 },
                 "required": [
@@ -4976,6 +5121,26 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "audience": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "webBaseUrl": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     }
                   },
                   "required": [
@@ -4986,7 +5151,9 @@
                     "scopes",
                     "fromAddress",
                     "verifyEmailSubject",
-                    "passwordResetSubject"
+                    "passwordResetSubject",
+                    "audience",
+                    "webBaseUrl"
                   ],
                   "additionalProperties": false
                 }
@@ -5155,6 +5322,26 @@
                         }
                       ]
                     },
+                    "audience": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "webBaseUrl": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time",
@@ -5182,6 +5369,8 @@
                     "fromAddress",
                     "verifyEmailSubject",
                     "passwordResetSubject",
+                    "audience",
+                    "webBaseUrl",
                     "createdAt",
                     "lastUsedAt"
                   ],
@@ -5326,6 +5515,30 @@
                       {
                         "type": "string",
                         "maxLength": 200
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "audience": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "webBaseUrl": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 500,
+                        "format": "uri"
                       },
                       {
                         "type": "null"

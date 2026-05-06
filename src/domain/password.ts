@@ -1,10 +1,9 @@
 import { prisma } from '../infra/db.js';
 import { audit } from '../infra/audit.js';
-import { sendEmail } from '../infra/email.js';
+import { sendEmail, resolveWebBaseUrl } from '../infra/email.js';
 import { hashPassword, verifyPassword } from '../crypto/password.js';
 import { isPasswordCompromised } from '../crypto/hibp.js';
 import { generateToken, hashToken } from '../crypto/tokens.js';
-import { env } from '../infra/env.js';
 import { AppError } from '../middleware/errors.js';
 
 const RESET_TOKEN_TTL_HOURS = 1;
@@ -41,7 +40,8 @@ export async function forgotPassword(emailIn: string, ctx: RequestCtx = {}): Pro
     data: { userId: user.id, type: 'PASSWORD_RESET', tokenHash: hash, expiresAt },
   });
 
-  const link = `${env().WEB_BASE_URL.replace(/\/$/, '')}/password/reset?token=${plaintext}`;
+  const base = await resolveWebBaseUrl(user.registeredClientId);
+  const link = `${base}/password/reset?token=${plaintext}`;
   await sendEmail({
     to: email,
     template: 'password_reset',

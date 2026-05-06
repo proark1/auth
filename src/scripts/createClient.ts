@@ -3,6 +3,8 @@
 //   npx tsx src/scripts/createClient.ts \
 //     --name="HR Service" \
 //     --scopes="hr:read,hr:write" \
+//     --audience="hr-service" \
+//     --web-base-url="https://hr.yourco.com" \
 //     --from-address="noreply@hr.yourco.com" \
 //     --verify-subject="Verify your HR account" \
 //     --reset-subject="Reset your HR password"
@@ -12,9 +14,13 @@
 // On success prints CLIENT_ID and CLIENT_SECRET. The secret is shown only here
 // — copy it into the consumer service's secret store immediately.
 //
-// Branding flags are optional; any omitted flag falls back to the global
-// EMAIL_SERVICE_FROM / hardcoded subject when this client proxies a register
-// or password-forgot call.
+// --audience is the `aud` value the auth-service stamps on access tokens for
+// users registered through this client. Each consumer should validate against
+// its own audience to prevent cross-tenant token reuse. Falls back to the
+// global JWT_AUDIENCE if omitted.
+// --web-base-url is the public origin used when building links in outgoing
+// emails (verify-email, password reset). Falls back to global WEB_BASE_URL
+// if omitted.
 
 import { createServiceClient } from '../domain/services.js';
 import { prisma } from '../infra/db.js';
@@ -25,6 +31,8 @@ interface Args {
   fromAddress?: string;
   verifyEmailSubject?: string;
   passwordResetSubject?: string;
+  audience?: string;
+  webBaseUrl?: string;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -43,6 +51,10 @@ function parseArgs(argv: string[]): Args {
       args.verifyEmailSubject = arg.slice('--verify-subject='.length);
     } else if (arg.startsWith('--reset-subject=')) {
       args.passwordResetSubject = arg.slice('--reset-subject='.length);
+    } else if (arg.startsWith('--audience=')) {
+      args.audience = arg.slice('--audience='.length);
+    } else if (arg.startsWith('--web-base-url=')) {
+      args.webBaseUrl = arg.slice('--web-base-url='.length);
     }
   }
   if (!args.name) {
@@ -54,6 +66,8 @@ function parseArgs(argv: string[]): Args {
     ...(args.fromAddress ? { fromAddress: args.fromAddress } : {}),
     ...(args.verifyEmailSubject ? { verifyEmailSubject: args.verifyEmailSubject } : {}),
     ...(args.passwordResetSubject ? { passwordResetSubject: args.passwordResetSubject } : {}),
+    ...(args.audience ? { audience: args.audience } : {}),
+    ...(args.webBaseUrl ? { webBaseUrl: args.webBaseUrl } : {}),
   };
 }
 
@@ -69,6 +83,8 @@ async function main() {
         client_secret: created.clientSecret,
         name: created.name,
         scopes: created.scopes,
+        audience: created.audience,
+        web_base_url: created.webBaseUrl,
         from_address: created.fromAddress,
         verify_email_subject: created.verifyEmailSubject,
         password_reset_subject: created.passwordResetSubject,

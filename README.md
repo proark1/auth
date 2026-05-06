@@ -8,17 +8,13 @@ API-first authentication service for internal platform (HR, email, meeting bot, 
 - Argon2id (passwords), `jose` (JWT/JWKS), `otplib` (TOTP), `@simplewebauthn/server` (passkeys)
 
 ## Token model
-- **Access token**: short-lived JWT (15 min), signed with rotating key, verified by other services via `/.well-known/jwks.json`. Stateless.
+- **Access token**: short-lived JWT (15 min), signed with rotating key, verified by other services via `/.well-known/jwks.json`. Stateless. The `aud` claim is **per-client** (each `ServiceClient` row has its own `audience`), so tokens minted for one consumer do not validate at another.
 - **Refresh token**: opaque, stored hashed in `Session`, rotated on every use, revocable.
-- **Service-to-service**: separate flow (TBD — client credentials).
+- **Service-to-service**: OAuth2 `client_credentials` grant. Service tokens carry `aud="service"`.
 
 ## MVP scope
 1. Register / verify email / resend verification
-<<<<<<< HEAD
-2. Login (password) + TOTP MFA + recovery (backup) codes
-=======
-2. Login (password or magic link) + TOTP MFA
->>>>>>> d9ca133 (Add magic-link (passwordless) login)
+2. Login (password or magic link) + TOTP MFA + recovery (backup) codes
 3. Refresh token rotation, logout, session list/revoke
 4. Password forgot / reset / change
 5. JWKS endpoint + key rotation
@@ -99,6 +95,21 @@ npm run dev
 ## Deployment (Railway)
 - One Railway project, three components: `auth-service` (this repo, Dockerfile build), Postgres plugin, Redis plugin.
 - `railway.toml` runs `prisma migrate deploy` before each deploy and healthchecks `/readyz` (verifies DB connectivity). `/healthz` is the simpler "process alive" liveness probe.
-- Required env vars: `DATABASE_URL`, `REDIS_URL`, `APP_ENCRYPTION_KEY`, `JWT_ISSUER`, `JWT_AUDIENCE`, `WEB_BASE_URL`, `EMAIL_SERVICE_URL`, `EMAIL_SERVICE_TOKEN`.
+- Required env vars on the auth service itself: `DATABASE_URL`, `REDIS_URL`, `APP_ENCRYPTION_KEY`, `JWT_ISSUER`, `JWT_AUDIENCE` (fallback for users not registered through a client), `WEB_BASE_URL` (fallback for the auth-service's own login/reset pages), `EMAIL_SERVICE_URL`, `EMAIL_SERVICE_TOKEN`.
 - Signing private keys + `APP_ENCRYPTION_KEY` should be injected from a real secret store (Doppler / Infisical), not pasted into the Railway UI.
 - Put Cloudflare in front and add WAF rate limits on `/v1/login`, `/v1/register`, `/v1/password/forgot`.
+
+### Integrating a consumer service
+
+Consumers (HR service, onetab.ai, …) only need **two** values in their env:
+
+- `AUTH_API_URL` — base URL of this auth service (e.g. `https://auth.example.com`)
+- `AUTH_CLIENT_ID` / `AUTH_CLIENT_SECRET` — credentials issued by `npm run create-client`
+
+At startup, the consumer fetches:
+
+- `${AUTH_API_URL}/.well-known/openid-configuration` → `issuer`, `jwks_uri`
+- `${AUTH_API_URL}/v1/clients/me` (with a service-credentials token) → `audience`
+
+It then verifies inbound JWTs against `iss = discovered_issuer`, `aud = own
+audience`. No `JWT_ISSUER` / `JWT_AUDIENCE` env vars to mirror, no drift.

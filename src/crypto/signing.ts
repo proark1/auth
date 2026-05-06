@@ -74,6 +74,11 @@ export interface IssueAccessInput {
   emailVerified?: boolean;
   roles?: string[];
   orgId?: string;
+  // Optional per-client audience for the `aud` claim. Falls back to
+  // env.JWT_AUDIENCE when omitted (e.g. user registered without a service
+  // client). Each consumer validates against its own audience to prevent
+  // cross-tenant token reuse.
+  audience?: string;
 }
 
 export async function issueAccessToken(input: IssueAccessInput): Promise<string> {
@@ -91,7 +96,7 @@ export async function issueAccessToken(input: IssueAccessInput): Promise<string>
   })
     .setProtectedHeader({ alg: ALG, kid: key.kid })
     .setIssuer(e.JWT_ISSUER)
-    .setAudience(e.JWT_AUDIENCE)
+    .setAudience(input.audience ?? e.JWT_AUDIENCE)
     .setSubject(input.sub)
     .setIssuedAt()
     .setExpirationTime(`${e.ACCESS_TOKEN_TTL_SECONDS}s`)
@@ -109,7 +114,7 @@ export async function verifyAccessToken(token: string): Promise<AccessClaims> {
 
 const MFA_CHALLENGE_TTL_SECONDS = 5 * 60;
 
-export async function issueMfaChallenge(userId: string): Promise<string> {
+export async function issueMfaChallenge(userId: string, audience?: string): Promise<string> {
   const e = env();
   const key = await getActiveKey();
   const privateJwk = JSON.parse(decrypt(key.privateEnc).toString('utf8'));
@@ -118,7 +123,7 @@ export async function issueMfaChallenge(userId: string): Promise<string> {
   return new SignJWT({ typ: 'mfa' })
     .setProtectedHeader({ alg: ALG, kid: key.kid })
     .setIssuer(e.JWT_ISSUER)
-    .setAudience(e.JWT_AUDIENCE)
+    .setAudience(audience ?? e.JWT_AUDIENCE)
     .setSubject(userId)
     .setIssuedAt()
     .setExpirationTime(`${MFA_CHALLENGE_TTL_SECONDS}s`)
@@ -218,6 +223,11 @@ export async function verifyServiceToken(token: string): Promise<ServiceClaims> 
 // ---------- shared verifier ----------
 
 async function verifyAnyToken(token: string): Promise<unknown> {
+  // We don't enforce a single audience here. Access tokens carry the
+  // per-client audience of the user's registered ServiceClient, and MFA
+  // challenges carry the same audience for consistency. Internal verification
+  // trusts issuer + signature + claim-shape (via the zod schema in the
+  // caller); downstream consumers enforce their own audience separately.
   const e = env();
   const { keys } = await jwks();
   const { payload } = await jwtVerify(
@@ -227,7 +237,7 @@ async function verifyAnyToken(token: string): Promise<unknown> {
       if (!jwk) throw new Error('unknown signing key');
       return importJWK(jwk, ALG);
     },
-    { issuer: e.JWT_ISSUER, audience: e.JWT_AUDIENCE, algorithms: [ALG] },
+    { issuer: e.JWT_ISSUER, algorithms: [ALG] },
   );
   return payload;
 }

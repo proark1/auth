@@ -237,6 +237,16 @@ model ServiceClient {
   verifyEmailSubject    String?
   passwordResetSubject  String?
 
+  // Per-service token audience. Stamped as `aud` on access tokens minted for
+  // users registered through this client, so each consumer only accepts its
+  // own tokens (cross-tenant isolation). Null => fall back to env JWT_AUDIENCE.
+  audience              String?
+  // Per-service public web origin. Used to build links in outgoing emails
+  // (verify-email, password reset) for users registered through this client,
+  // so reset pages stay on the consumer's brand. Null => fall back to env
+  // WEB_BASE_URL.
+  webBaseUrl            String?
+
   createdAt        DateTime  @default(now())
   lastUsedAt       DateTime?
 
