@@ -178,6 +178,41 @@ curl -sS -X DELETE "$BASE/v1/mfa/totp/$FACTOR_ID" \
 # → 204
 ```
 
+### Backup (recovery) codes
+
+After confirming a TOTP factor, generate a batch of single-use recovery
+codes so the user isn't locked out if they lose their phone:
+
+```sh
+curl -sS -X POST $BASE/v1/mfa/backup-codes/regenerate \
+  -H "authorization: Bearer $ACCESS"
+# → 200
+# { "codes":["A2K7X-MQ4PN", "Z9HJF-KR3VW", …], "count":10 }
+```
+
+Display the codes to the user **once** — they're hashed at rest and can't
+be retrieved again. Calling regenerate a second time invalidates the old
+batch atomically.
+
+Check how many codes are still unused:
+
+```sh
+curl -sS $BASE/v1/mfa/backup-codes -H "authorization: Bearer $ACCESS"
+# → 200 { "remaining": 9 }
+```
+
+If the user has lost their TOTP device, they complete login with a
+backup code instead:
+
+```sh
+curl -sS -X POST $BASE/v1/login/mfa/recovery \
+  -H 'content-type: application/json' \
+  -d "{\"mfa_token\":\"$MFA_TOKEN\",\"backup_code\":\"A2K7X-MQ4PN\"}"
+# → 200 { access_token, refresh_token, … }
+```
+
+Each code is single-use; consumed codes can never be replayed.
+
 ---
 
 ## 4. Session management

@@ -13,7 +13,14 @@ import { env } from '../infra/env.js';
 import { registerUser, verifyEmail, resendVerification } from '../domain/users.js';
 import { login } from '../domain/login.js';
 import { forgotPassword, resetPassword, changePassword } from '../domain/password.js';
-import { setupTotp, confirmTotp, deleteTotp, completeMfaLogin } from '../domain/mfa.js';
+import {
+  setupTotp,
+  confirmTotp,
+  deleteTotp,
+  completeMfaLogin,
+  completeMfaLoginWithBackupCode,
+} from '../domain/mfa.js';
+import { regenerateBackupCodes, countUnusedBackupCodes } from '../domain/backupCodes.js';
 import { issueClientCredentialsToken } from '../domain/services.js';
 import {
   rotateSession,
@@ -355,6 +362,39 @@ export async function registerRoutes(app: AppInstance) {
     },
   });
 
+  // Recovery path: complete MFA login with a printed backup code instead of
+  // a TOTP. Same rate limit + lockout as TOTP failures so this can't be used
+  // as an easier brute-force surface.
+  const loginRecoveryBody = z.object({
+    mfa_token: z.string().min(1).max(2048),
+    backup_code: z.string().min(8).max(32),
+  });
+  r.route({
+    method: 'POST',
+    url: '/v1/login/mfa/recovery',
+    config: veryStrict,
+    schema: {
+      tags: ['auth', 'mfa'],
+      summary: 'Complete login with an MFA backup (recovery) code',
+      body: loginRecoveryBody,
+      response: {
+        200: tokenResponse,
+        400: errorResponse,
+        401: errorResponse,
+      },
+    },
+    handler: async (req, reply) => {
+      const { mfa_token, backup_code } = req.body as z.infer<typeof loginRecoveryBody>;
+      const session = await completeMfaLoginWithBackupCode({
+        mfaToken: mfa_token,
+        backupCode: backup_code,
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+      return reply.code(200).send(tokenPayload(session));
+    },
+  });
+
   const refreshBody = z.object({ refresh_token: z.string().min(1).max(512) });
   r.route({
     method: 'POST',
@@ -626,6 +666,57 @@ export async function registerRoutes(app: AppInstance) {
       const { id } = req.params as z.infer<typeof totpDeleteParams>;
       await deleteTotp(me.id, id, ctxFrom(req));
       return reply.code(204).send(null);
+    },
+  });
+
+  // Backup codes: regenerate (returns plaintext once) + read remaining count.
+  // Regenerating discards any prior batch atomically, so a leaked old set
+  // becomes useless the moment the user prints a new one.
+  const backupCodesResponse = z.object({
+    codes: z.array(z.string()),
+    count: z.number().int(),
+  });
+  r.route({
+    method: 'POST',
+    url: '/v1/mfa/backup-codes/regenerate',
+    preHandler: [requireUser],
+    schema: {
+      tags: ['mfa'],
+      summary: 'Generate a fresh batch of MFA backup codes',
+      description:
+        'Returns plaintext codes exactly once. Any previously-issued codes are invalidated. ' +
+        'Display these to the user and tell them to store them somewhere safe.',
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: backupCodesResponse,
+        401: errorResponse,
+        404: errorResponse,
+      },
+    },
+    handler: async (req) => {
+      const me = currentUser(req);
+      const codes = await regenerateBackupCodes(me.id, ctxFrom(req));
+      return { codes, count: codes.length };
+    },
+  });
+
+  r.route({
+    method: 'GET',
+    url: '/v1/mfa/backup-codes',
+    preHandler: [requireUser],
+    schema: {
+      tags: ['mfa'],
+      summary: 'Number of unused MFA backup codes remaining',
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: z.object({ remaining: z.number().int() }),
+        401: errorResponse,
+      },
+    },
+    handler: async (req) => {
+      const me = currentUser(req);
+      const remaining = await countUnusedBackupCodes(me.id);
+      return { remaining };
     },
   });
 
