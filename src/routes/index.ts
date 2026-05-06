@@ -21,6 +21,7 @@ import {
   completeMfaLoginWithBackupCode,
 } from '../domain/mfa.js';
 import { regenerateBackupCodes, countUnusedBackupCodes } from '../domain/backupCodes.js';
+import { requestEmailChange, confirmEmailChange } from '../domain/emailChange.js';
 import { issueClientCredentialsToken } from '../domain/services.js';
 import {
   rotateSession,
@@ -506,6 +507,68 @@ export async function registerRoutes(app: AppInstance) {
       const { current_password, new_password } = req.body as z.infer<typeof changeBody>;
       await changePassword(me.id, current_password, new_password, ctxFrom(req));
       return reply.code(204).send(null);
+    },
+  });
+
+  // --- Email change (authenticated) ---
+  // Request goes via current password + new address; the confirm token is
+  // emailed to the NEW address as proof of ownership. Confirming swaps the
+  // email and revokes every active session.
+
+  const emailChangeRequestBody = z.object({
+    current_password: z.string().min(1).max(256),
+    new_email: emailSchema,
+  });
+  r.route({
+    method: 'POST',
+    url: '/v1/email/change/request',
+    preHandler: [requireUser],
+    config: strict,
+    schema: {
+      tags: ['registration'],
+      summary: 'Request an email-address change (sends confirm link to new address)',
+      security: [{ bearerAuth: [] }],
+      body: emailChangeRequestBody,
+      response: {
+        202: z.object({ status: z.literal('queued') }),
+        400: errorResponse,
+        401: errorResponse,
+        409: errorResponse,
+      },
+    },
+    handler: async (req, reply) => {
+      const me = currentUser(req);
+      const body = req.body as z.infer<typeof emailChangeRequestBody>;
+      await requestEmailChange(
+        { userId: me.id, currentPassword: body.current_password, newEmail: body.new_email },
+        ctxFrom(req),
+      );
+      return reply.code(202).send({ status: 'queued' as const });
+    },
+  });
+
+  const emailChangeConfirmBody = z.object({ token: z.string().min(1).max(512) });
+  r.route({
+    method: 'POST',
+    url: '/v1/email/change/confirm',
+    config: strict,
+    schema: {
+      tags: ['registration'],
+      summary: 'Confirm an email-address change with the emailed token',
+      description:
+        'Single-use, 1-hour TTL. On success the user is logged out of every device — '
+        + "the new email is the new recovery path, so re-authentication is forced.",
+      body: emailChangeConfirmBody,
+      response: {
+        200: z.object({ status: z.literal('changed'), email: z.string().email() }),
+        400: errorResponse,
+        409: errorResponse,
+      },
+    },
+    handler: async (req, reply) => {
+      const { token } = req.body as z.infer<typeof emailChangeConfirmBody>;
+      const result = await confirmEmailChange(token, ctxFrom(req));
+      return reply.code(200).send({ status: 'changed' as const, email: result.newEmail });
     },
   });
 

@@ -38,6 +38,33 @@ curl -sS -X POST $BASE/v1/email/verify \
 # → 200 {"status":"verified"}
 ```
 
+### Change email (authenticated)
+
+```sh
+# Step 1: prove possession of the password and request a swap to the new
+# address. The confirm link goes to the *new* email — no change happens
+# until the user clicks it.
+curl -sS -X POST $BASE/v1/email/change/request \
+  -H "authorization: Bearer $ACCESS" \
+  -H 'content-type: application/json' \
+  -d '{"current_password":"…","new_email":"alice2@example.com"}'
+# → 202 {"status":"queued"}
+```
+
+```sh
+# Step 2: confirm with the token from the email.
+curl -sS -X POST $BASE/v1/email/change/confirm \
+  -H 'content-type: application/json' \
+  -d '{"token":"<token-from-email>"}'
+# → 200 {"status":"changed","email":"alice2@example.com"}
+```
+
+On success, every active session for the user is revoked — email is the
+recovery path for password reset, so a change forces fresh logins on
+every device. Reusing a token, using it after the 1-hour expiry, or
+confirming when the new address has been claimed in the meantime all
+return 4xx.
+
 ### Resend verification
 
 ```sh

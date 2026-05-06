@@ -14,7 +14,11 @@ import { prisma } from './db.js';
 // nextAttemptAt has passed. Net effect: a register / reset request never
 // fails because the mailer hiccuped.
 
-export type EmailTemplate = 'verify_email' | 'password_reset' | 'new_device_login';
+export type EmailTemplate =
+  | 'verify_email'
+  | 'password_reset'
+  | 'new_device_login'
+  | 'email_change';
 
 export interface SendEmailInput {
   to: string;
@@ -29,6 +33,7 @@ const SUBJECTS: Record<EmailTemplate, string> = {
   verify_email: 'Verify your email',
   password_reset: 'Reset your password',
   new_device_login: 'New sign-in to your account',
+  email_change: 'Confirm your new email address',
 };
 
 function templateIdFor(template: EmailTemplate): string | undefined {
@@ -40,6 +45,8 @@ function templateIdFor(template: EmailTemplate): string | undefined {
       return e.PASSWORD_RESET_TEMPLATE_ID;
     case 'new_device_login':
       return e.NEW_DEVICE_LOGIN_TEMPLATE_ID;
+    case 'email_change':
+      return e.EMAIL_CHANGE_TEMPLATE_ID;
   }
 }
 
