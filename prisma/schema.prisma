@@ -46,11 +46,19 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+<<<<<<< HEAD
   sessions       Session[]
   mfaFactors     MfaFactor[]
   mfaBackupCodes MfaBackupCode[]
   emailTokens    EmailToken[]
   auditEvents    AuditEvent[]
+=======
+  sessions             Session[]
+  mfaFactors           MfaFactor[]
+  emailTokens          EmailToken[]
+  emailChangeRequests  EmailChangeRequest[]
+  auditEvents          AuditEvent[]
+>>>>>>> 7ff7d58 (Add authenticated email-change flow)
 
   @@index([status])
   @@index([role])
@@ -157,6 +165,25 @@ model EmailToken {
   createdAt DateTime       @default(now())
 
   @@index([userId, type])
+}
+
+// Pending email-address changes. Separated from EmailToken because we need
+// to know the *requested* new email to swap on confirmation, and that's not
+// a generic field. Token is sent to the NEW address (proof of ownership);
+// the user's current email isn't touched until they click the link.
+model EmailChangeRequest {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  newEmail    String    @db.Citext      // case-insensitive, parity with User.email
+  tokenHash   String    @unique         // sha256 of the random token sent in email
+
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
 }
 
 // ---------- JWT signing keys ----------
