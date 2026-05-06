@@ -49,3 +49,23 @@ export const mfaClaimsSchema = z.object({
 });
 
 export type MfaClaims = z.infer<typeof mfaClaimsSchema>;
+
+// Short-lived WebAuthn ceremony token. We hand the random 32-byte challenge
+// (`chal`, base64url) to the client wrapped in a server-signed JWT instead of
+// persisting it: round-tripping a signed challenge avoids a per-ceremony DB
+// row. `purpose` distinguishes registration (sub = userId) from discoverable
+// authentication (sub absent — the credential's userHandle resolves the
+// account at verify time).
+export const webauthnChallengeClaimsSchema = z.object({
+  iss: z.string().url(),
+  aud: z.union([z.string(), z.array(z.string())]),
+  sub: z.string().uuid().optional(),
+  iat: z.number().int(),
+  exp: z.number().int(),
+  jti: z.string(),
+  typ: z.literal('webauthn'),
+  purpose: z.enum(['register', 'authenticate']),
+  chal: z.string().min(1),
+});
+
+export type WebauthnChallengeClaims = z.infer<typeof webauthnChallengeClaimsSchema>;

@@ -68,6 +68,19 @@ const schema = z.object({
     .optional()
     .transform((v) => v?.toLowerCase() === 'true' || v === '1'),
   NEW_DEVICE_WINDOW_DAYS: z.coerce.number().int().min(1).default(90),
+
+  // WebAuthn / Passkeys.
+  // - WEBAUTHN_RP_ID: the effective domain (eTLD+1 or a subdomain of it) the
+  //   user sees in the credential prompt. Browsers refuse credentials whose
+  //   RP ID isn't a registrable suffix of `window.location.hostname`. Defaults
+  //   to the JWT_ISSUER host.
+  // - WEBAUTHN_RP_NAME: human-readable label shown in some prompts.
+  // - WEBAUTHN_ORIGINS: comma-separated list of origins the browser will be
+  //   on when calling navigator.credentials. Usually the WEB_BASE_URL plus any
+  //   alternate hostnames; defaults to WEB_BASE_URL.
+  WEBAUTHN_RP_ID: z.string().min(1).optional(),
+  WEBAUTHN_RP_NAME: z.string().min(1).default('Auth Service'),
+  WEBAUTHN_ORIGINS: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof schema>;

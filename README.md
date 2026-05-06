@@ -5,7 +5,7 @@ API-first authentication service for internal platform (HR, email, meeting bot, 
 ## Stack
 - Node 22 + TypeScript, Fastify
 - Postgres + Prisma, Redis
-- Argon2id (passwords), `jose` (JWT/JWKS), `otplib` (TOTP), `@simplewebauthn/server` (passkeys, phase 2)
+- Argon2id (passwords), `jose` (JWT/JWKS), `otplib` (TOTP), `@simplewebauthn/server` (passkeys)
 
 ## Token model
 - **Access token**: short-lived JWT (15 min), signed with rotating key, verified by other services via `/.well-known/jwks.json`. Stateless.
@@ -28,7 +28,6 @@ API-first authentication service for internal platform (HR, email, meeting bot, 
 ## Out of scope for MVP
 - OAuth2 authorization server (third-party apps) — add Ory Hydra later if needed
 - SSO / SAML / SCIM
-- Passkeys (schema is ready, flow is phase 2)
 - Social login
 
 ## Repo layout

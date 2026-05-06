@@ -8,9 +8,11 @@ import {
   accessClaimsSchema,
   mfaClaimsSchema,
   serviceClaimsSchema,
+  webauthnChallengeClaimsSchema,
   type AccessClaims,
   type MfaClaims,
   type ServiceClaims,
+  type WebauthnChallengeClaims,
 } from './claims.js';
 
 const ALG = 'EdDSA';
@@ -127,6 +129,43 @@ export async function issueMfaChallenge(userId: string): Promise<string> {
 export async function verifyMfaChallenge(token: string): Promise<MfaClaims> {
   const payload = await verifyAnyToken(token);
   return mfaClaimsSchema.parse(payload);
+}
+
+// ---------- WebAuthn ceremony token ----------
+
+const WEBAUTHN_CHALLENGE_TTL_SECONDS = 5 * 60;
+
+export interface IssueWebauthnChallengeInput {
+  purpose: 'register' | 'authenticate';
+  chal: string;       // base64url challenge bytes from @simplewebauthn
+  userId?: string;    // present for register; absent for discoverable auth
+}
+
+export async function issueWebauthnChallenge(input: IssueWebauthnChallengeInput): Promise<string> {
+  const e = env();
+  const key = await getActiveKey();
+  const privateJwk = JSON.parse(decrypt(key.privateEnc).toString('utf8'));
+  const privateKey = await importJWK(privateJwk, ALG);
+
+  const jwt = new SignJWT({
+    typ: 'webauthn',
+    purpose: input.purpose,
+    chal: input.chal,
+  })
+    .setProtectedHeader({ alg: ALG, kid: key.kid })
+    .setIssuer(e.JWT_ISSUER)
+    .setAudience(e.JWT_AUDIENCE)
+    .setIssuedAt()
+    .setExpirationTime(`${WEBAUTHN_CHALLENGE_TTL_SECONDS}s`)
+    .setJti(randomUUID());
+
+  if (input.userId) jwt.setSubject(input.userId);
+  return jwt.sign(privateKey);
+}
+
+export async function verifyWebauthnChallenge(token: string): Promise<WebauthnChallengeClaims> {
+  const payload = await verifyAnyToken(token);
+  return webauthnChallengeClaimsSchema.parse(payload);
 }
 
 // ---------- service-to-service token ----------
