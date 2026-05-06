@@ -38,6 +38,33 @@ curl -sS -X POST $BASE/v1/email/verify \
 # → 200 {"status":"verified"}
 ```
 
+### Change email (authenticated)
+
+```sh
+# Step 1: prove possession of the password and request a swap to the new
+# address. The confirm link goes to the *new* email — no change happens
+# until the user clicks it.
+curl -sS -X POST $BASE/v1/email/change/request \
+  -H "authorization: Bearer $ACCESS" \
+  -H 'content-type: application/json' \
+  -d '{"current_password":"…","new_email":"alice2@example.com"}'
+# → 202 {"status":"queued"}
+```
+
+```sh
+# Step 2: confirm with the token from the email.
+curl -sS -X POST $BASE/v1/email/change/confirm \
+  -H 'content-type: application/json' \
+  -d '{"token":"<token-from-email>"}'
+# → 200 {"status":"changed","email":"alice2@example.com"}
+```
+
+On success, every active session for the user is revoked — email is the
+recovery path for password reset, so a change forces fresh logins on
+every device. Reusing a token, using it after the 1-hour expiry, or
+confirming when the new address has been claimed in the meantime all
+return 4xx.
+
 ### Resend verification
 
 ```sh
@@ -77,6 +104,33 @@ curl -sS -X POST $BASE/v1/login/mfa -H 'content-type: application/json' \
 # → 200 (full token pair, same shape as above)
 ```
 
+### Log in via magic link (passwordless)
+
+```sh
+# Step 1: ask the server to email a one-shot sign-in link.
+curl -sS -X POST $BASE/v1/login/magic/request \
+  -H 'content-type: application/json' \
+  -d '{"email":"alice@example.com"}'
+# → 202 {"status":"queued"}
+```
+
+The request is silent on whether the address exists, is disabled, or is
+unverified — it always returns 202. The user receives an email at
+`/login/magic?token=...` (15-minute expiry, single use).
+
+```sh
+# Step 2: the page extracts the token and posts it to /verify.
+curl -sS -X POST $BASE/v1/login/magic/verify \
+  -H 'content-type: application/json' \
+  -d '{"token":"<token-from-email>"}'
+# → 200 (full token pair) — or, if the user has TOTP enrolled,
+#       {"mfa_required":true,"mfa_token":"…"} and continue at /v1/login/mfa.
+```
+
+Magic-link sign-in is treated as a first factor only: if the user has TOTP
+enrolled, the flow funnels through the same `/v1/login/mfa` exchange as a
+password login. This keeps the second-factor policy in one place.
+
 ### Refresh tokens
 
 Refresh tokens rotate on every use. The previous refresh token is invalidated;
@@ -105,6 +159,39 @@ curl -sS -X POST $BASE/v1/logout \
 curl -sS $BASE/v1/me -H "authorization: Bearer $ACCESS"
 # → 200 {"id":"…","email":"…","email_verified":true,"status":"active","created_at":"…"}
 ```
+
+### Export my data (GDPR)
+
+```sh
+curl -sS -O -J $BASE/v1/me/data -H "authorization: Bearer $ACCESS"
+# → saves auth-export-<userId>.json with everything we hold
+```
+
+The JSON contains the user row, every session, MFA factor, email-token,
+and audit event. Secrets are elided (TOTP secret bytes, refresh-token
+hashes, password hash) — only their presence is reflected.
+
+### Delete my account
+
+```sh
+# Step 1: prove possession of the password and request a confirm email.
+curl -sS -X POST $BASE/v1/me/delete/request \
+  -H "authorization: Bearer $ACCESS" \
+  -H 'content-type: application/json' \
+  -d '{"current_password":"…"}'
+# → 202 {"status":"queued"}
+
+# Step 2: confirm with the emailed token.
+curl -sS -X POST $BASE/v1/me/delete/confirm \
+  -H 'content-type: application/json' \
+  -d '{"token":"<token-from-email>"}'
+# → 200 {"status":"deleted"}
+```
+
+Confirming hard-deletes the user. Sessions, MFA factors, and pending
+tokens cascade. Audit events stay in the log with `userId` nulled —
+useful for security review and not regulated as PII once the user
+link is severed.
 
 ---
 
@@ -177,6 +264,41 @@ curl -sS -X DELETE "$BASE/v1/mfa/totp/$FACTOR_ID" \
   -H "authorization: Bearer $ACCESS"
 # → 204
 ```
+
+### Backup (recovery) codes
+
+After confirming a TOTP factor, generate a batch of single-use recovery
+codes so the user isn't locked out if they lose their phone:
+
+```sh
+curl -sS -X POST $BASE/v1/mfa/backup-codes/regenerate \
+  -H "authorization: Bearer $ACCESS"
+# → 200
+# { "codes":["A2K7X-MQ4PN", "Z9HJF-KR3VW", …], "count":10 }
+```
+
+Display the codes to the user **once** — they're hashed at rest and can't
+be retrieved again. Calling regenerate a second time invalidates the old
+batch atomically.
+
+Check how many codes are still unused:
+
+```sh
+curl -sS $BASE/v1/mfa/backup-codes -H "authorization: Bearer $ACCESS"
+# → 200 { "remaining": 9 }
+```
+
+If the user has lost their TOTP device, they complete login with a
+backup code instead:
+
+```sh
+curl -sS -X POST $BASE/v1/login/mfa/recovery \
+  -H 'content-type: application/json' \
+  -d "{\"mfa_token\":\"$MFA_TOKEN\",\"backup_code\":\"A2K7X-MQ4PN\"}"
+# → 200 { access_token, refresh_token, … }
+```
+
+Each code is single-use; consumed codes can never be replayed.
 
 ---
 

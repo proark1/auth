@@ -11,7 +11,7 @@ const links = [
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
   const session = await requireSession();
   return (
-    <DashboardShell email={session.email} isAdmin={session.isAdmin} links={links}>
+    <DashboardShell email={session.email} isAdmin={session.isAdmin} area="dashboard" links={links}>
       {children}
     </DashboardShell>
   );

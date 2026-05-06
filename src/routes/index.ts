@@ -13,8 +13,22 @@ import { env } from '../infra/env.js';
 import { registerUser, verifyEmail, resendVerification } from '../domain/users.js';
 import { login } from '../domain/login.js';
 import { forgotPassword, resetPassword, changePassword } from '../domain/password.js';
-import { setupTotp, confirmTotp, deleteTotp, completeMfaLogin } from '../domain/mfa.js';
+import {
+  setupTotp,
+  confirmTotp,
+  deleteTotp,
+  completeMfaLogin,
+  completeMfaLoginWithBackupCode,
+} from '../domain/mfa.js';
+import { regenerateBackupCodes, countUnusedBackupCodes } from '../domain/backupCodes.js';
+import { requestEmailChange, confirmEmailChange } from '../domain/emailChange.js';
+import { requestMagicLink, verifyMagicLink } from '../domain/magicLink.js';
 import { issueClientCredentialsToken } from '../domain/services.js';
+import {
+  requestAccountDeletion,
+  confirmAccountDeletion,
+  exportUserData,
+} from '../domain/account.js';
 import {
   rotateSession,
   revokeSessionByToken,
@@ -127,6 +141,60 @@ export async function registerRoutes(app: AppInstance) {
       },
     },
     handler: async () => ({ ok: true as const }),
+  });
+
+  // Readiness probe — distinct from liveness. /healthz only proves the
+  // process is alive; /readyz proves the dependencies it needs to actually
+  // serve traffic are reachable. Used by Railway / k8s readiness checks so
+  // a fresh container isn't sent traffic before its DB pool warms.
+  //
+  // Currently checks Postgres only — Redis isn't wired into a runtime client
+  // yet (REDIS_URL exists in env for forward compatibility). Add a Redis
+  // ping here when the first feature actually depends on it.
+  const readyResponse = z.object({
+    ok: z.boolean(),
+    checks: z.object({
+      db: z.object({
+        ok: z.boolean(),
+        // Always populated for both success and failure — handler measures
+        // wall time around the probe call. Non-negative by construction.
+        latency_ms: z.number().int().min(0),
+        error: z.string().optional(),
+      }),
+    }),
+  });
+  r.route({
+    method: 'GET',
+    url: '/readyz',
+    config: uncapped,
+    schema: {
+      tags: ['discovery'],
+      summary: 'Readiness probe (verifies DB connectivity)',
+      response: { 200: readyResponse, 503: readyResponse },
+    },
+    handler: async (_req, reply) => {
+      const start = Date.now();
+      let dbOk = false;
+      let dbError: string | undefined;
+      try {
+        await prisma.$queryRaw`SELECT 1`;
+        dbOk = true;
+      } catch (err) {
+        // Truncate regardless of source — non-Error throws (`throw "boom"`)
+        // shouldn't sneak past the cap on response-body size.
+        dbError = (err instanceof Error ? err.message : String(err)).slice(0, 200);
+      }
+      const latencyMs = Date.now() - start;
+      const status = dbOk ? 200 : 503;
+      return reply.code(status).send({
+        ok: dbOk,
+        checks: {
+          db: dbOk
+            ? { ok: true, latency_ms: latencyMs }
+            : { ok: false, latency_ms: latencyMs, error: dbError ?? 'unknown' },
+        },
+      });
+    },
   });
 
   r.route({
@@ -307,6 +375,92 @@ export async function registerRoutes(app: AppInstance) {
     },
   });
 
+  // Recovery path: complete MFA login with a printed backup code instead of
+  // a TOTP. Same rate limit + lockout as TOTP failures so this can't be used
+  // as an easier brute-force surface.
+  const loginRecoveryBody = z.object({
+    mfa_token: z.string().min(1).max(2048),
+    backup_code: z.string().min(8).max(32),
+  });
+  r.route({
+    method: 'POST',
+    url: '/v1/login/mfa/recovery',
+    config: veryStrict,
+    schema: {
+      tags: ['auth', 'mfa'],
+      summary: 'Complete login with an MFA backup (recovery) code',
+      body: loginRecoveryBody,
+      response: {
+        200: tokenResponse,
+        400: errorResponse,
+        401: errorResponse,
+      },
+    },
+    handler: async (req, reply) => {
+      const { mfa_token, backup_code } = req.body as z.infer<typeof loginRecoveryBody>;
+      const session = await completeMfaLoginWithBackupCode({
+        mfaToken: mfa_token,
+        backupCode: backup_code,
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+      return reply.code(200).send(tokenPayload(session));
+    },
+  });
+
+  // Magic-link login (passwordless). Two endpoints, mirrors the
+  // forgot/reset-password shape:
+  //   - request: always returns 202; sends a one-shot URL by email if the
+  //     account exists, is ACTIVE, and email-verified.
+  //   - verify:  exchanges the URL token for either a session or, if MFA is
+  //     enrolled, the same mfa_token shape /v1/login returns. Single-use,
+  //     atomic claim, 15-minute TTL.
+  const magicRequestBody = z.object({ email: emailSchema });
+  r.route({
+    method: 'POST',
+    url: '/v1/login/magic/request',
+    config: veryStrict,
+    schema: {
+      tags: ['auth'],
+      summary: 'Request a one-shot magic-link sign-in email',
+      description: 'Always returns 202 to prevent enumeration.',
+      body: magicRequestBody,
+      response: {
+        202: z.object({ status: z.literal('queued') }),
+        400: errorResponse,
+      },
+    },
+    handler: async (req, reply) => {
+      const { email } = req.body as z.infer<typeof magicRequestBody>;
+      await requestMagicLink(email, ctxFrom(req));
+      return reply.code(202).send({ status: 'queued' as const });
+    },
+  });
+
+  const magicVerifyBody = z.object({ token: z.string().min(1).max(512) });
+  r.route({
+    method: 'POST',
+    url: '/v1/login/magic/verify',
+    config: veryStrict,
+    schema: {
+      tags: ['auth'],
+      summary: 'Exchange a magic-link token for a session (or MFA challenge)',
+      body: magicVerifyBody,
+      response: {
+        200: loginResponse,
+        400: errorResponse,
+      },
+    },
+    handler: async (req, reply) => {
+      const { token } = req.body as z.infer<typeof magicVerifyBody>;
+      const result = await verifyMagicLink(token, ctxFrom(req));
+      if (result.kind === 'mfa_required') {
+        return reply.code(200).send({ mfa_required: true as const, mfa_token: result.mfaToken });
+      }
+      return reply.code(200).send(tokenPayload(result.session));
+    },
+  });
+
   const refreshBody = z.object({ refresh_token: z.string().min(1).max(512) });
   r.route({
     method: 'POST',
@@ -421,6 +575,68 @@ export async function registerRoutes(app: AppInstance) {
     },
   });
 
+  // --- Email change (authenticated) ---
+  // Request goes via current password + new address; the confirm token is
+  // emailed to the NEW address as proof of ownership. Confirming swaps the
+  // email and revokes every active session.
+
+  const emailChangeRequestBody = z.object({
+    current_password: z.string().min(1).max(256),
+    new_email: emailSchema,
+  });
+  r.route({
+    method: 'POST',
+    url: '/v1/email/change/request',
+    preHandler: [requireUser],
+    config: strict,
+    schema: {
+      tags: ['registration'],
+      summary: 'Request an email-address change (sends confirm link to new address)',
+      security: [{ bearerAuth: [] }],
+      body: emailChangeRequestBody,
+      response: {
+        202: z.object({ status: z.literal('queued') }),
+        400: errorResponse,
+        401: errorResponse,
+        409: errorResponse,
+      },
+    },
+    handler: async (req, reply) => {
+      const me = currentUser(req);
+      const body = req.body as z.infer<typeof emailChangeRequestBody>;
+      await requestEmailChange(
+        { userId: me.id, currentPassword: body.current_password, newEmail: body.new_email },
+        ctxFrom(req),
+      );
+      return reply.code(202).send({ status: 'queued' as const });
+    },
+  });
+
+  const emailChangeConfirmBody = z.object({ token: z.string().min(1).max(512) });
+  r.route({
+    method: 'POST',
+    url: '/v1/email/change/confirm',
+    config: strict,
+    schema: {
+      tags: ['registration'],
+      summary: 'Confirm an email-address change with the emailed token',
+      description:
+        'Single-use, 1-hour TTL. On success the user is logged out of every device — '
+        + "the new email is the new recovery path, so re-authentication is forced.",
+      body: emailChangeConfirmBody,
+      response: {
+        200: z.object({ status: z.literal('changed'), email: z.string().email() }),
+        400: errorResponse,
+        409: errorResponse,
+      },
+    },
+    handler: async (req, reply) => {
+      const { token } = req.body as z.infer<typeof emailChangeConfirmBody>;
+      const result = await confirmEmailChange(token, ctxFrom(req));
+      return reply.code(200).send({ status: 'changed' as const, email: result.newEmail });
+    },
+  });
+
   // --- Current user ---
   const meResponse = z.object({
     id: z.string().uuid(),
@@ -454,6 +670,84 @@ export async function registerRoutes(app: AppInstance) {
         status: u.status,
         created_at: u.createdAt.toISOString(),
       };
+    },
+  });
+
+  // GDPR data export. Returns the entirety of what we hold for the caller as
+  // a single JSON blob — secrets are never included in plaintext (TOTP
+  // secret bytes, refresh-token hashes, password hash all elided), but every
+  // visible attribute, every session, every audit event, every token row is.
+  r.route({
+    method: 'GET',
+    url: '/v1/me/data',
+    preHandler: [requireUser],
+    schema: {
+      tags: ['me'],
+      summary: 'Export everything we hold about the current user (JSON)',
+      security: [{ bearerAuth: [] }],
+      // The shape is large and pretty-much all-optional in practice; surface
+      // it as `unknown` rather than re-declaring the export schema in two
+      // places. The OpenAPI is still useful as a discovery endpoint.
+      response: { 200: z.unknown(), 401: errorResponse, 404: errorResponse },
+    },
+    handler: async (req, reply) => {
+      const me = currentUser(req);
+      const data = await exportUserData(me.id);
+      // application/json is the default; set Content-Disposition so a curl
+      // -O actually saves a file with a sensible name.
+      reply.header('content-disposition', `attachment; filename="auth-export-${me.id}.json"`);
+      return data;
+    },
+  });
+
+  // Self-service account deletion. Two-step: re-auth + emailed confirm token,
+  // then hard delete on confirm. Mirrors password-reset / email-change.
+  const deleteRequestBody = z.object({ current_password: z.string().min(1).max(256) });
+  r.route({
+    method: 'POST',
+    url: '/v1/me/delete/request',
+    preHandler: [requireUser],
+    config: strict,
+    schema: {
+      tags: ['me'],
+      summary: 'Request account deletion (sends confirm link)',
+      security: [{ bearerAuth: [] }],
+      body: deleteRequestBody,
+      response: {
+        202: z.object({ status: z.literal('queued') }),
+        400: errorResponse,
+        401: errorResponse,
+      },
+    },
+    handler: async (req, reply) => {
+      const me = currentUser(req);
+      const body = req.body as z.infer<typeof deleteRequestBody>;
+      await requestAccountDeletion(me.id, body.current_password, ctxFrom(req));
+      return reply.code(202).send({ status: 'queued' as const });
+    },
+  });
+
+  const deleteConfirmBody = z.object({ token: z.string().min(1).max(512) });
+  r.route({
+    method: 'POST',
+    url: '/v1/me/delete/confirm',
+    config: strict,
+    schema: {
+      tags: ['me'],
+      summary: 'Confirm account deletion with the emailed token (irreversible)',
+      description:
+        'Hard-deletes the user. Cascades drop sessions, MFA factors, and pending '
+        + 'tokens. Audit events stay in the log with userId nulled.',
+      body: deleteConfirmBody,
+      response: {
+        200: z.object({ status: z.literal('deleted') }),
+        400: errorResponse,
+      },
+    },
+    handler: async (req, reply) => {
+      const { token } = req.body as z.infer<typeof deleteConfirmBody>;
+      await confirmAccountDeletion(token, ctxFrom(req));
+      return reply.code(200).send({ status: 'deleted' as const });
     },
   });
 
@@ -578,6 +872,57 @@ export async function registerRoutes(app: AppInstance) {
       const { id } = req.params as z.infer<typeof totpDeleteParams>;
       await deleteTotp(me.id, id, ctxFrom(req));
       return reply.code(204).send(null);
+    },
+  });
+
+  // Backup codes: regenerate (returns plaintext once) + read remaining count.
+  // Regenerating discards any prior batch atomically, so a leaked old set
+  // becomes useless the moment the user prints a new one.
+  const backupCodesResponse = z.object({
+    codes: z.array(z.string()),
+    count: z.number().int(),
+  });
+  r.route({
+    method: 'POST',
+    url: '/v1/mfa/backup-codes/regenerate',
+    preHandler: [requireUser],
+    schema: {
+      tags: ['mfa'],
+      summary: 'Generate a fresh batch of MFA backup codes',
+      description:
+        'Returns plaintext codes exactly once. Any previously-issued codes are invalidated. ' +
+        'Display these to the user and tell them to store them somewhere safe.',
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: backupCodesResponse,
+        401: errorResponse,
+        404: errorResponse,
+      },
+    },
+    handler: async (req) => {
+      const me = currentUser(req);
+      const codes = await regenerateBackupCodes(me.id, ctxFrom(req));
+      return { codes, count: codes.length };
+    },
+  });
+
+  r.route({
+    method: 'GET',
+    url: '/v1/mfa/backup-codes',
+    preHandler: [requireUser],
+    schema: {
+      tags: ['mfa'],
+      summary: 'Number of unused MFA backup codes remaining',
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: z.object({ remaining: z.number().int() }),
+        401: errorResponse,
+      },
+    },
+    handler: async (req) => {
+      const me = currentUser(req);
+      const remaining = await countUnusedBackupCodes(me.id);
+      return { remaining };
     },
   });
 

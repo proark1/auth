@@ -5,6 +5,7 @@ import { issueAccessToken } from '../crypto/signing.js';
 import { env } from '../infra/env.js';
 import { audit } from '../infra/audit.js';
 import { AppError } from '../middleware/errors.js';
+import { notifyIfNewDevice } from './newDevice.js';
 
 export interface IssueSessionInput {
   userId: string;
@@ -16,6 +17,14 @@ export interface IssueSessionInput {
   audience?: string | undefined;
   ip?: string | undefined;
   userAgent?: string | undefined;
+  // Fire the "new device" notification email on this session if it's a fresh
+  // login. Refresh-token rotations set this to false — we don't want to spam
+  // the user every 15 minutes when they're already signed in. Default true.
+  notifyOnNewDevice?: boolean | undefined;
+  // Audit/email metadata: 'password' | 'magic_link' | 'passkey' | etc.
+  // Drives only the new-device email's "method" field today.
+  loggedInVia?: string | undefined;
+  registeredClientId?: string | null | undefined;
 }
 
 function rolesClaim(role: Role): string[] {
@@ -53,6 +62,22 @@ export async function issueSession(input: IssueSessionInput): Promise<IssuedSess
     roles: rolesClaim(input.role),
     ...(input.audience ? { audience: input.audience } : {}),
   });
+
+  // Fresh login (not a rotation) and the caller didn't suppress notifications
+  // → kick off the new-device check in the background. Login MUST NOT wait
+  // on a DB lookup + outbound email. notifyIfNewDevice already swallows its
+  // own errors, so a fire-and-forget `void` is the right shape here.
+  if (input.notifyOnNewDevice !== false) {
+    void notifyIfNewDevice({
+      userId: input.userId,
+      email: input.email,
+      ip: input.ip ?? null,
+      userAgent: input.userAgent ?? null,
+      excludeSessionId: session.id,
+      registeredClientId: input.registeredClientId ?? null,
+      loggedInVia: input.loggedInVia,
+    });
+  }
 
   return { accessToken, refreshToken, refreshTokenExpiresAt: expiresAt, sessionId: session.id };
 }
@@ -99,6 +124,9 @@ export async function rotateSession(refreshTokenPlain: string, ctx: RotateCtx = 
     audience: user.registeredClient?.audience ?? undefined,
     ip: ctx.ip,
     userAgent: ctx.userAgent,
+    // Refresh-rotation isn't a fresh login; skip the new-device email so we
+    // don't spam the user on every 15-minute rotation.
+    notifyOnNewDevice: false,
   });
 
   await prisma.session.update({

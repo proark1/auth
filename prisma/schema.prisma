@@ -46,10 +46,12 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  sessions     Session[]
-  mfaFactors   MfaFactor[]
-  emailTokens  EmailToken[]
-  auditEvents  AuditEvent[]
+  sessions             Session[]
+  mfaFactors           MfaFactor[]
+  mfaBackupCodes       MfaBackupCode[]
+  emailTokens          EmailToken[]
+  emailChangeRequests  EmailChangeRequest[]
+  auditEvents          AuditEvent[]
 
   @@index([status])
   @@index([role])
@@ -112,11 +114,37 @@ model MfaFactor {
   @@index([userId])
 }
 
-// ---------- Email tokens (verify + password reset) ----------
+// MFA recovery codes. Issued in batches when a user enrolls/regenerates.
+// Each plaintext code is shown to the user exactly once; we persist a
+// peppered HMAC of the canonicalized code (see crypto/backupCodes.ts) and
+// mark usedAt on consumption (single-use).
+//
+// Codes belong to the user (not to a specific factor) so they keep working
+// after a phone is lost and the TOTP factor is deleted/replaced.
+//
+// Uniqueness is scoped to (userId, codeHash) rather than codeHash alone:
+// at 50 bits of entropy the birthday-paradox collision rate across the whole
+// table is non-zero at scale, and a global unique would surface as a 500 to
+// an innocent user. The composite constraint also serves as the lookup index.
+model MfaBackupCode {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  codeHash  String
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@unique([userId, codeHash])
+}
+
+// ---------- Email tokens (verify + password reset + magic link + ...) ----------
 
 enum EmailTokenType {
   VERIFY_EMAIL
   PASSWORD_RESET
+  ACCOUNT_DELETION
+  LOGIN_MAGIC_LINK
 }
 
 model EmailToken {
@@ -132,6 +160,25 @@ model EmailToken {
   createdAt DateTime       @default(now())
 
   @@index([userId, type])
+}
+
+// Pending email-address changes. Separated from EmailToken because we need
+// to know the *requested* new email to swap on confirmation, and that's not
+// a generic field. Token is sent to the NEW address (proof of ownership);
+// the user's current email isn't touched until they click the link.
+model EmailChangeRequest {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  newEmail    String    @db.Citext      // case-insensitive, parity with User.email
+  tokenHash   String    @unique         // sha256 of the random token sent in email
+
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
 }
 
 // ---------- JWT signing keys ----------
@@ -193,6 +240,35 @@ model ServiceClient {
   registeredUsers  User[]
 
   @@index([disabled])
+}
+
+// ---------- Pending email queue ----------
+//
+// When the upstream mailer is unavailable, sendEmail persists the message
+// here and returns success to the caller — register/login/etc. shouldn't
+// fail on a transient mailer outage. A retry worker (src/infra/emailWorker.ts)
+// drains rows whose nextAttemptAt has passed.
+
+model PendingEmail {
+  id            String     @id @default(uuid()) @db.Uuid
+  recipient     String     // raw email address quoted to recipient
+  template      String     // 'verify_email' | 'password_reset' | …
+  // Template variables (link, token, etc). Treat as sensitive — these
+  // payloads contain reset/verify tokens. Cleared by the retention sweep on
+  // permanent failure or after sentAt + grace period.
+  vars          Json
+  clientId      String?    @db.Uuid
+
+  attempts      Int        @default(0)
+  lastError     String?
+  nextAttemptAt DateTime   @default(now())
+  sentAt        DateTime?
+  failedAt      DateTime?
+
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([sentAt, nextAttemptAt])
 }
 
 // ---------- Audit log ----------

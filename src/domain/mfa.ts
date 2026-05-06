@@ -11,6 +11,7 @@ import {
 } from '../crypto/totp.js';
 import { verifyMfaChallenge } from '../crypto/signing.js';
 import { issueSession, type IssuedSession } from './sessions.js';
+import { consumeBackupCode, countUnusedBackupCodes } from './backupCodes.js';
 
 interface RequestCtx {
   ip?: string | undefined;
@@ -105,19 +106,26 @@ export async function userHasConfirmedMfa(userId: string): Promise<boolean> {
 
 // ---------- /v1/login/mfa ----------
 
-export interface CompleteMfaInput {
-  mfaToken: string;
-  code: string;
-  ip?: string | undefined;
-  userAgent?: string | undefined;
+interface MfaChallengeUser {
+  id: string;
+  email: string;
+  emailVerifiedAt: Date | null;
+  role: import('@prisma/client').Role;
+  registeredClientId: string | null;
+  audience: string | null;
 }
 
-export async function completeMfaLogin(input: CompleteMfaInput): Promise<IssuedSession> {
+// Shared preamble for both TOTP and backup-code completion paths: validate the
+// mfa_token, look up the user, and re-check the lockout. Returns the user on
+// success; throws the appropriate AppError otherwise.
+async function resolveMfaChallenge(
+  mfaToken: string,
+  ctx: { ip?: string | undefined; userAgent?: string | undefined },
+): Promise<MfaChallengeUser> {
   const invalid = new AppError(401, 'invalid_token', 'mfa token invalid or expired');
-
   let claims;
   try {
-    claims = await verifyMfaChallenge(input.mfaToken);
+    claims = await verifyMfaChallenge(mfaToken);
   } catch {
     throw invalid;
   }
@@ -130,26 +138,66 @@ export async function completeMfaLogin(input: CompleteMfaInput): Promise<IssuedS
   });
   if (!user || user.status !== 'ACTIVE') throw invalid;
 
-  // Re-check lockout: a user can be locked between /v1/login and /v1/login/mfa
-  // (e.g. another attacker hammering passwords). The mfa_token alone must not
-  // bypass the lock.
   if (user.lockedUntil && user.lockedUntil > new Date()) {
-    await audit({
-      event: 'login.mfa.fail.locked',
-      userId,
-      ip: input.ip,
-      userAgent: input.userAgent,
-    });
+    await audit({ event: 'login.mfa.fail.locked', userId, ...ctx });
     throw new AppError(423, 'account_locked', 'account temporarily locked, try again later');
   }
+  return {
+    id: user.id,
+    email: user.email,
+    emailVerifiedAt: user.emailVerifiedAt,
+    role: user.role,
+    registeredClientId: user.registeredClientId,
+    audience: user.registeredClient?.audience ?? null,
+  };
+}
+
+// Atomic-increment failed counter and lock the account on threshold. Mirrors
+// login.ts so password and MFA brute-force share the same lockout budget.
+async function recordMfaFailure(
+  userId: string,
+  event: string,
+  ctx: { ip?: string | undefined; userAgent?: string | undefined },
+): Promise<{ failedCount: number; locked: boolean }> {
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: { failedLoginCount: { increment: 1 } },
+    select: { failedLoginCount: true },
+  });
+  const locked = updated.failedLoginCount >= MAX_FAILED_LOGINS;
+  if (locked) {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { lockedUntil: new Date(Date.now() + LOCKOUT_DURATION_MS) },
+    });
+  }
+  await audit({
+    event,
+    userId,
+    ...ctx,
+    metadata: { failedCount: updated.failedLoginCount, locked },
+  });
+  return { failedCount: updated.failedLoginCount, locked };
+}
+
+export interface CompleteMfaInput {
+  mfaToken: string;
+  code: string;
+  ip?: string | undefined;
+  userAgent?: string | undefined;
+}
+
+export async function completeMfaLogin(input: CompleteMfaInput): Promise<IssuedSession> {
+  const ctx = { ip: input.ip, userAgent: input.userAgent };
+  const user = await resolveMfaChallenge(input.mfaToken, ctx);
 
   const factors = await prisma.mfaFactor.findMany({
-    where: { userId, type: 'TOTP', confirmedAt: { not: null } },
+    where: { userId: user.id, type: 'TOTP', confirmedAt: { not: null } },
   });
   if (factors.length === 0) {
     // Defensive: user reached MFA exchange without a factor. Shouldn't happen
     // unless the factor was deleted between /login and /login/mfa.
-    throw invalid;
+    throw new AppError(401, 'invalid_token', 'mfa token invalid or expired');
   }
 
   // Try the code against each confirmed factor. Constant-ish work; users
@@ -165,33 +213,7 @@ export async function completeMfaLogin(input: CompleteMfaInput): Promise<IssuedS
   }
 
   if (!matched) {
-    // Bump the shared failed-login counter so MFA brute-force triggers the
-    // same lockout as password brute-force. The mfa_token stays valid for its
-    // full TTL, but lockout cuts off code-guessing across IPs.
-    //
-    // Atomic increment: concurrent failed attempts from rotating IPs would
-    // otherwise all read the same stale failedLoginCount and each write back
-    // `stale + 1`, letting the attacker exceed MAX_FAILED_LOGINS before the
-    // lockout fires.
-    const updated = await prisma.user.update({
-      where: { id: userId },
-      data: { failedLoginCount: { increment: 1 } },
-      select: { failedLoginCount: true },
-    });
-    const shouldLock = updated.failedLoginCount >= MAX_FAILED_LOGINS;
-    if (shouldLock) {
-      await prisma.user.update({
-        where: { id: userId },
-        data: { lockedUntil: new Date(Date.now() + LOCKOUT_DURATION_MS) },
-      });
-    }
-    await audit({
-      event: 'login.mfa.fail',
-      userId,
-      ip: input.ip,
-      userAgent: input.userAgent,
-      metadata: { failedCount: updated.failedLoginCount, locked: shouldLock },
-    });
+    await recordMfaFailure(user.id, 'login.mfa.fail', ctx);
     throw new AppError(401, 'invalid_code', 'invalid TOTP code');
   }
 
@@ -199,7 +221,7 @@ export async function completeMfaLogin(input: CompleteMfaInput): Promise<IssuedS
   // (potentially stale) `user` row would miss the case where concurrent
   // failures bumped the DB value while we were verifying the code.
   await prisma.user.update({
-    where: { id: userId },
+    where: { id: user.id },
     data: { failedLoginCount: 0, lockedUntil: null },
   });
 
@@ -209,21 +231,77 @@ export async function completeMfaLogin(input: CompleteMfaInput): Promise<IssuedS
   });
 
   const session = await issueSession({
-    userId,
+    userId: user.id,
     email: user.email,
     emailVerified: !!user.emailVerifiedAt,
     role: user.role,
-    audience: user.registeredClient?.audience ?? undefined,
+    audience: user.audience ?? undefined,
     ip: input.ip,
     userAgent: input.userAgent,
+    registeredClientId: user.registeredClientId,
+    loggedInVia: 'password+totp',
   });
 
   await audit({
     event: 'login.mfa.success',
-    userId,
+    userId: user.id,
+    ...ctx,
+    metadata: { sessionId: session.sessionId },
+  });
+  return session;
+}
+
+// ---------- /v1/login/mfa/recovery (backup-code path) ----------
+
+export interface CompleteMfaWithBackupInput {
+  mfaToken: string;
+  backupCode: string;
+  ip?: string | undefined;
+  userAgent?: string | undefined;
+}
+
+// Backup codes are a fallback path: a user who has lost their TOTP device
+// proves possession of one of the codes they printed out at enrollment. The
+// rate-limit + atomic lockout machinery is identical to TOTP failures so this
+// can't be abused as an easier brute-force surface (50-bit codes vs 6-digit
+// TOTP, but we still cap attempts).
+export async function completeMfaLoginWithBackupCode(
+  input: CompleteMfaWithBackupInput,
+): Promise<IssuedSession> {
+  const ctx = { ip: input.ip, userAgent: input.userAgent };
+  const user = await resolveMfaChallenge(input.mfaToken, ctx);
+
+  const consumed = await consumeBackupCode(user.id, input.backupCode);
+  if (!consumed) {
+    await recordMfaFailure(user.id, 'login.mfa.backup.fail', ctx);
+    throw new AppError(401, 'invalid_code', 'invalid recovery code');
+  }
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { failedLoginCount: 0, lockedUntil: null },
+  });
+
+  const session = await issueSession({
+    userId: user.id,
+    email: user.email,
+    emailVerified: !!user.emailVerifiedAt,
+    role: user.role,
+    audience: user.audience ?? undefined,
     ip: input.ip,
     userAgent: input.userAgent,
-    metadata: { sessionId: session.sessionId },
+    registeredClientId: user.registeredClientId,
+    loggedInVia: 'password+backup_code',
+  });
+
+  // Caller should be nudged to regenerate when codes run low; surface the
+  // remaining count in the audit metadata for ops visibility.
+  const remaining = await countUnusedBackupCodes(user.id);
+  await audit({
+    event: 'login.mfa.backup.success',
+    userId: user.id,
+    ...ctx,
+    metadata: { sessionId: session.sessionId, remainingBackupCodes: remaining },
   });
   return session;
 }

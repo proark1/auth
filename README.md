@@ -14,7 +14,7 @@ API-first authentication service for internal platform (HR, email, meeting bot, 
 
 ## MVP scope
 1. Register / verify email / resend verification
-2. Login (password) + TOTP MFA
+2. Login (password or magic link) + TOTP MFA + recovery (backup) codes
 3. Refresh token rotation, logout, session list/revoke
 4. Password forgot / reset / change
 5. JWKS endpoint + key rotation
@@ -95,7 +95,7 @@ npm run dev
 
 ## Deployment (Railway)
 - One Railway project, three components: `auth-service` (this repo, Dockerfile build), Postgres plugin, Redis plugin.
-- `railway.toml` runs `prisma migrate deploy` before each deploy and healthchecks `/healthz`.
+- `railway.toml` runs `prisma migrate deploy` before each deploy and healthchecks `/readyz` (verifies DB connectivity). `/healthz` is the simpler "process alive" liveness probe.
 - Required env vars on the auth service itself: `DATABASE_URL`, `REDIS_URL`, `APP_ENCRYPTION_KEY`, `JWT_ISSUER`, `JWT_AUDIENCE` (fallback for users not registered through a client), `WEB_BASE_URL` (fallback for the auth-service's own login/reset pages), `EMAIL_SERVICE_URL`, `EMAIL_SERVICE_TOKEN`.
 - Signing private keys + `APP_ENCRYPTION_KEY` should be injected from a real secret store (Doppler / Infisical), not pasted into the Railway UI.
 - Put Cloudflare in front and add WAF rate limits on `/v1/login`, `/v1/register`, `/v1/password/forgot`.

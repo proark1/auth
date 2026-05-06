@@ -7,7 +7,11 @@ dockerfilePath = "Dockerfile"
 
 [deploy]
 startCommand = "node dist/server.js"
-healthcheckPath = "/healthz"
+# /readyz fails (503) until the DB is reachable, so Railway won't promote
+# a fresh container into rotation while its connection pool is still warming.
+# /healthz is the simpler "process alive" check; use that if you want
+# liveness-only behaviour.
+healthcheckPath = "/readyz"
 healthcheckTimeout = 10
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5

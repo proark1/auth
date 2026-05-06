@@ -28,6 +28,46 @@ const schema = z.object({
   EMAIL_SERVICE_FROM: z.string().email().optional(),
   VERIFY_EMAIL_TEMPLATE_ID: z.string().uuid().optional(),
   PASSWORD_RESET_TEMPLATE_ID: z.string().uuid().optional(),
+  NEW_DEVICE_LOGIN_TEMPLATE_ID: z.string().uuid().optional(),
+  EMAIL_CHANGE_TEMPLATE_ID: z.string().uuid().optional(),
+  ACCOUNT_DELETION_TEMPLATE_ID: z.string().uuid().optional(),
+  MAGIC_LINK_TEMPLATE_ID: z.string().uuid().optional(),
+
+  // Compromised-password check via the haveibeenpwned k-anonymity API.
+  // - HIBP_ENABLED: opt-in. When false, register/reset/change are not
+  //   blocked on a leaked-password match (and never make the outbound HTTP).
+  // - HIBP_THRESHOLD: minimum prefix-suffix count to consider a password
+  //   "compromised". 1 = block any match (most aggressive); 100 = block only
+  //   passwords seen in 100+ breaches (more permissive). Defaults to 1.
+  // - HIBP_TIMEOUT_MS: request timeout. Failures fail OPEN — we don't block
+  //   sign-ups when HIBP is having a bad day. Defaults to 2s.
+  // z.coerce.boolean() treats any non-empty string as true (so "false"
+  // becomes true). Parse the literal text instead.
+  HIBP_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v?.toLowerCase() === 'true' || v === '1'),
+  HIBP_THRESHOLD: z.coerce.number().int().min(1).default(1),
+  HIBP_TIMEOUT_MS: z.coerce.number().int().min(100).default(2000),
+
+  // Email retry worker. When enabled, the API process drains the
+  // PendingEmail queue on a timer. Off in test/CI; on in any deployment.
+  EMAIL_WORKER_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v?.toLowerCase() === 'true' || v === '1'),
+  EMAIL_WORKER_POLL_MS: z.coerce.number().int().min(1000).default(15_000),
+
+  // "We noticed a sign-in from a new device/network" notification email.
+  // Off by default. When on, issueSession compares the new session's IP
+  // against the user's prior sessions in the last NEW_DEVICE_WINDOW_DAYS;
+  // if no prior session matched, an informational email is sent.
+  // Failures don't break login.
+  NEW_DEVICE_EMAIL_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v?.toLowerCase() === 'true' || v === '1'),
+  NEW_DEVICE_WINDOW_DAYS: z.coerce.number().int().min(1).default(90),
 });
 
 export type Env = z.infer<typeof schema>;
@@ -37,4 +77,9 @@ let cached: Env | undefined;
 export function env(): Env {
   if (!cached) cached = schema.parse(process.env);
   return cached;
+}
+
+// Test hook — discard the cache so a test that mutates process.env sees them.
+export function _resetEnvCache(): void {
+  cached = undefined;
 }
