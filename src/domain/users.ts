@@ -2,9 +2,10 @@ import { prisma } from '../infra/db.js';
 import { audit } from '../infra/audit.js';
 import { sendEmail } from '../infra/email.js';
 import { hashPassword } from '../crypto/password.js';
+import { isPasswordCompromised } from '../crypto/hibp.js';
 import { generateToken, hashToken } from '../crypto/tokens.js';
 import { env } from '../infra/env.js';
-import { errors } from '../middleware/errors.js';
+import { AppError, errors } from '../middleware/errors.js';
 
 const VERIFY_TOKEN_TTL_HOURS = 24;
 
@@ -29,6 +30,20 @@ export interface RegisterInput {
 export async function registerUser(input: RegisterInput, ctx: RequestCtx = {}): Promise<void> {
   const email = input.email.toLowerCase().trim();
   const registeredClientId = input.registeredClientId ?? null;
+
+  // Reject passwords known to be in public breach corpora. This is the only
+  // pre-existence check that runs *before* the duplicate-email branch — even
+  // a no-op duplicate response shouldn't accept a known-leaked password,
+  // since the caller might be trying to reset it. Fail-open semantics live
+  // inside isPasswordCompromised (HIBP down → no rejection).
+  if (await isPasswordCompromised(input.password)) {
+    await audit({ event: 'user.register.fail.compromised_password', metadata: { email }, ...ctx });
+    throw new AppError(
+      400,
+      'compromised_password',
+      'this password has appeared in known data breaches; please choose another',
+    );
+  }
 
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
