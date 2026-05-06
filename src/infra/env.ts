@@ -30,6 +30,7 @@ const schema = z.object({
   PASSWORD_RESET_TEMPLATE_ID: z.string().uuid().optional(),
   NEW_DEVICE_LOGIN_TEMPLATE_ID: z.string().uuid().optional(),
   EMAIL_CHANGE_TEMPLATE_ID: z.string().uuid().optional(),
+  ACCOUNT_DELETION_TEMPLATE_ID: z.string().uuid().optional(),
 
   // Compromised-password check via the haveibeenpwned k-anonymity API.
   // - HIBP_ENABLED: opt-in. When false, register/reset/change are not

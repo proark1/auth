@@ -133,6 +133,39 @@ curl -sS $BASE/v1/me -H "authorization: Bearer $ACCESS"
 # → 200 {"id":"…","email":"…","email_verified":true,"status":"active","created_at":"…"}
 ```
 
+### Export my data (GDPR)
+
+```sh
+curl -sS -O -J $BASE/v1/me/data -H "authorization: Bearer $ACCESS"
+# → saves auth-export-<userId>.json with everything we hold
+```
+
+The JSON contains the user row, every session, MFA factor, email-token,
+and audit event. Secrets are elided (TOTP secret bytes, refresh-token
+hashes, password hash) — only their presence is reflected.
+
+### Delete my account
+
+```sh
+# Step 1: prove possession of the password and request a confirm email.
+curl -sS -X POST $BASE/v1/me/delete/request \
+  -H "authorization: Bearer $ACCESS" \
+  -H 'content-type: application/json' \
+  -d '{"current_password":"…"}'
+# → 202 {"status":"queued"}
+
+# Step 2: confirm with the emailed token.
+curl -sS -X POST $BASE/v1/me/delete/confirm \
+  -H 'content-type: application/json' \
+  -d '{"token":"<token-from-email>"}'
+# → 200 {"status":"deleted"}
+```
+
+Confirming hard-deletes the user. Sessions, MFA factors, and pending
+tokens cascade. Audit events stay in the log with `userId` nulled —
+useful for security review and not regulated as PII once the user
+link is severed.
+
 ---
 
 ## 2. Password management

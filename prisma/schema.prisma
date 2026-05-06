@@ -143,6 +143,7 @@ model MfaBackupCode {
 enum EmailTokenType {
   VERIFY_EMAIL
   PASSWORD_RESET
+  ACCOUNT_DELETION
 }
 
 model EmailToken {
