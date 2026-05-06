@@ -1,5 +1,10 @@
 import { prisma } from '../infra/db.js';
-import { verifyPassword, needsRehash, hashPassword } from '../crypto/password.js';
+import {
+  verifyPassword,
+  needsRehash,
+  hashPassword,
+  verifyDummyPassword,
+} from '../crypto/password.js';
 import { audit } from '../infra/audit.js';
 import { AppError } from '../middleware/errors.js';
 import { issueSession, type IssuedSession } from './sessions.js';
@@ -32,6 +37,10 @@ export async function login(input: LoginInput, ctx: LoginCtx = {}): Promise<Logi
 
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
+    // Equalize timing with the wrong-password branch (~argon2.verify cost).
+    // Otherwise the no-user branch returns ~50ms faster and leaks account
+    // existence even though the response is identical.
+    await verifyDummyPassword(input.password);
     await audit({ event: 'login.fail.unknown_email', metadata: { email }, ...ctx });
     throw genericFail;
   }

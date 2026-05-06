@@ -21,7 +21,10 @@ export async function forgotPassword(emailIn: string, ctx: RequestCtx = {}): Pro
   const user = await prisma.user.findUnique({ where: { email } });
 
   if (!user || user.status === 'DISABLED') {
-    await audit({ event: 'password.forgot.noop', metadata: { email }, ...ctx });
+    // Don't persist the attacker-supplied email here: an attacker probing for
+    // accounts can otherwise write unbounded user-controlled strings into the
+    // audit log. IP + UA from ctx are enough to rate-limit / investigate.
+    await audit({ event: 'password.forgot.noop', ...ctx });
     return;
   }
 

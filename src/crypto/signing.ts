@@ -171,7 +171,7 @@ export async function verifyServiceToken(token: string): Promise<ServiceClaims> 
       if (!jwk) throw new Error('unknown signing key');
       return importJWK(jwk, ALG);
     },
-    { issuer: e.JWT_ISSUER, audience: 'service' },
+    { issuer: e.JWT_ISSUER, audience: 'service', algorithms: [ALG] },
   );
   return serviceClaimsSchema.parse(payload);
 }
@@ -188,7 +188,7 @@ async function verifyAnyToken(token: string): Promise<unknown> {
       if (!jwk) throw new Error('unknown signing key');
       return importJWK(jwk, ALG);
     },
-    { issuer: e.JWT_ISSUER, audience: e.JWT_AUDIENCE },
+    { issuer: e.JWT_ISSUER, audience: e.JWT_AUDIENCE, algorithms: [ALG] },
   );
   return payload;
 }
