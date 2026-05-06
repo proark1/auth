@@ -165,32 +165,40 @@ export async function completeMfaLogin(input: CompleteMfaInput): Promise<IssuedS
     // Bump the shared failed-login counter so MFA brute-force triggers the
     // same lockout as password brute-force. The mfa_token stays valid for its
     // full TTL, but lockout cuts off code-guessing across IPs.
-    const failedCount = user.failedLoginCount + 1;
-    const shouldLock = failedCount >= MAX_FAILED_LOGINS;
-    await prisma.user.update({
+    //
+    // Atomic increment: concurrent failed attempts from rotating IPs would
+    // otherwise all read the same stale failedLoginCount and each write back
+    // `stale + 1`, letting the attacker exceed MAX_FAILED_LOGINS before the
+    // lockout fires.
+    const updated = await prisma.user.update({
       where: { id: userId },
-      data: {
-        failedLoginCount: failedCount,
-        lockedUntil: shouldLock ? new Date(Date.now() + LOCKOUT_DURATION_MS) : null,
-      },
+      data: { failedLoginCount: { increment: 1 } },
+      select: { failedLoginCount: true },
     });
+    const shouldLock = updated.failedLoginCount >= MAX_FAILED_LOGINS;
+    if (shouldLock) {
+      await prisma.user.update({
+        where: { id: userId },
+        data: { lockedUntil: new Date(Date.now() + LOCKOUT_DURATION_MS) },
+      });
+    }
     await audit({
       event: 'login.mfa.fail',
       userId,
       ip: input.ip,
       userAgent: input.userAgent,
-      metadata: { failedCount, locked: shouldLock },
+      metadata: { failedCount: updated.failedLoginCount, locked: shouldLock },
     });
     throw new AppError(401, 'invalid_code', 'invalid TOTP code');
   }
 
-  // Success: reset the shared counter (matches the password-success path).
-  if (user.failedLoginCount > 0 || user.lockedUntil) {
-    await prisma.user.update({
-      where: { id: userId },
-      data: { failedLoginCount: 0, lockedUntil: null },
-    });
-  }
+  // Success: always reset the shared counter. Skipping based on the local
+  // (potentially stale) `user` row would miss the case where concurrent
+  // failures bumped the DB value while we were verifying the code.
+  await prisma.user.update({
+    where: { id: userId },
+    data: { failedLoginCount: 0, lockedUntil: null },
+  });
 
   await prisma.mfaFactor.update({
     where: { id: matched.id },

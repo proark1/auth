@@ -37,10 +37,17 @@ export function needsRehash(hash: string): boolean {
 // returns false in roughly the same time as a real verify.
 let dummyHashPromise: Promise<string> | undefined;
 
-async function getDummyHash(): Promise<string> {
+function getDummyHash(): Promise<string> {
+  // Assign the promise synchronously so a burst of concurrent callers all
+  // await the same single argon2.hash, instead of each spawning their own
+  // before the first one finishes (the previous `await import` between the
+  // check and the assignment yielded the event loop, allowing duplicate
+  // computations under a login burst).
   if (!dummyHashPromise) {
-    const seed = (await import('node:crypto')).randomBytes(32).toString('base64');
-    dummyHashPromise = argon2.hash(seed, HASH_OPTIONS);
+    dummyHashPromise = (async () => {
+      const { randomBytes } = await import('node:crypto');
+      return argon2.hash(randomBytes(32).toString('base64'), HASH_OPTIONS);
+    })();
   }
   return dummyHashPromise;
 }
