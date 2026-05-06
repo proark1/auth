@@ -16,6 +16,7 @@ process.env.REDIS_URL ??= 'redis://localhost:6379';
 process.env.APP_ENCRYPTION_KEY ??= Buffer.alloc(32).toString('base64');
 process.env.JWT_ISSUER ??= 'http://localhost:8080';
 process.env.JWT_AUDIENCE ??= 'placeholder';
+process.env.WEB_BASE_URL ??= 'http://localhost:3000';
 process.env.NODE_ENV ??= 'development';
 process.env.LOG_LEVEL ??= 'silent';
 
