@@ -124,7 +124,10 @@ export async function completeMfaLogin(input: CompleteMfaInput): Promise<IssuedS
   if (claims.typ !== 'mfa') throw invalid;
 
   const userId = claims.sub;
-  const user = await prisma.user.findUnique({ where: { id: userId } });
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { registeredClient: { select: { audience: true } } },
+  });
   if (!user || user.status !== 'ACTIVE') throw invalid;
 
   // Re-check lockout: a user can be locked between /v1/login and /v1/login/mfa
@@ -210,6 +213,7 @@ export async function completeMfaLogin(input: CompleteMfaInput): Promise<IssuedS
     email: user.email,
     emailVerified: !!user.emailVerifiedAt,
     role: user.role,
+    audience: user.registeredClient?.audience ?? undefined,
     ip: input.ip,
     userAgent: input.userAgent,
   });

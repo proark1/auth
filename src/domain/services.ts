@@ -18,6 +18,8 @@ export interface CreateClientInput {
   fromAddress?: string | undefined;
   verifyEmailSubject?: string | undefined;
   passwordResetSubject?: string | undefined;
+  audience?: string | undefined;
+  webBaseUrl?: string | undefined;
 }
 
 export interface CreatedClient {
@@ -29,6 +31,8 @@ export interface CreatedClient {
   fromAddress: string | null;
   verifyEmailSubject: string | null;
   passwordResetSubject: string | null;
+  audience: string | null;
+  webBaseUrl: string | null;
 }
 
 export async function createServiceClient(input: CreateClientInput): Promise<CreatedClient> {
@@ -46,6 +50,8 @@ export async function createServiceClient(input: CreateClientInput): Promise<Cre
       fromAddress: input.fromAddress ?? null,
       verifyEmailSubject: input.verifyEmailSubject ?? null,
       passwordResetSubject: input.passwordResetSubject ?? null,
+      audience: input.audience ?? null,
+      webBaseUrl: input.webBaseUrl ?? null,
     },
   });
 
@@ -60,6 +66,8 @@ export async function createServiceClient(input: CreateClientInput): Promise<Cre
     fromAddress: row.fromAddress,
     verifyEmailSubject: row.verifyEmailSubject,
     passwordResetSubject: row.passwordResetSubject,
+    audience: row.audience,
+    webBaseUrl: row.webBaseUrl,
   };
 }
 

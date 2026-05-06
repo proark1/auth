@@ -282,6 +282,8 @@ export async function listClients() {
       fromAddress: true,
       verifyEmailSubject: true,
       passwordResetSubject: true,
+      audience: true,
+      webBaseUrl: true,
       createdAt: true,
       lastUsedAt: true,
     },
@@ -295,6 +297,8 @@ export async function listClients() {
     fromAddress: c.fromAddress,
     verifyEmailSubject: c.verifyEmailSubject,
     passwordResetSubject: c.passwordResetSubject,
+    audience: c.audience,
+    webBaseUrl: c.webBaseUrl,
     createdAt: c.createdAt.toISOString(),
     lastUsedAt: c.lastUsedAt ? c.lastUsedAt.toISOString() : null,
   }));
@@ -312,6 +316,8 @@ export async function getClient(id: string) {
     fromAddress: c.fromAddress,
     verifyEmailSubject: c.verifyEmailSubject,
     passwordResetSubject: c.passwordResetSubject,
+    audience: c.audience,
+    webBaseUrl: c.webBaseUrl,
     createdAt: c.createdAt.toISOString(),
     lastUsedAt: c.lastUsedAt ? c.lastUsedAt.toISOString() : null,
   };
@@ -324,6 +330,8 @@ export interface UpdateClientInput {
   fromAddress?: string | null | undefined;
   verifyEmailSubject?: string | null | undefined;
   passwordResetSubject?: string | null | undefined;
+  audience?: string | null | undefined;
+  webBaseUrl?: string | null | undefined;
 }
 
 export async function updateClient(id: string, patch: UpdateClientInput, ctx: ActorCtx) {
@@ -337,6 +345,8 @@ export async function updateClient(id: string, patch: UpdateClientInput, ctx: Ac
   if (patch.fromAddress !== undefined) data.fromAddress = patch.fromAddress;
   if (patch.verifyEmailSubject !== undefined) data.verifyEmailSubject = patch.verifyEmailSubject;
   if (patch.passwordResetSubject !== undefined) data.passwordResetSubject = patch.passwordResetSubject;
+  if (patch.audience !== undefined) data.audience = patch.audience;
+  if (patch.webBaseUrl !== undefined) data.webBaseUrl = patch.webBaseUrl;
 
   await prisma.serviceClient.update({ where: { id }, data });
 

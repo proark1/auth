@@ -1,9 +1,8 @@
 import { prisma } from '../infra/db.js';
 import { audit } from '../infra/audit.js';
-import { sendEmail } from '../infra/email.js';
+import { sendEmail, resolveWebBaseUrl } from '../infra/email.js';
 import { hashPassword } from '../crypto/password.js';
 import { generateToken, hashToken } from '../crypto/tokens.js';
-import { env } from '../infra/env.js';
 import { errors } from '../middleware/errors.js';
 
 const VERIFY_TOKEN_TTL_HOURS = 24;
@@ -106,7 +105,8 @@ async function issueVerificationEmail(
     data: { userId, type: 'VERIFY_EMAIL', tokenHash: hash, expiresAt },
   });
 
-  const link = `${env().WEB_BASE_URL.replace(/\/$/, '')}/verify-email?token=${plaintext}`;
+  const base = await resolveWebBaseUrl(registeredClientId);
+  const link = `${base}/verify-email?token=${plaintext}`;
   await sendEmail({
     to: email,
     template: 'verify_email',

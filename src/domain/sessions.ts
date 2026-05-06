@@ -11,6 +11,9 @@ export interface IssueSessionInput {
   email: string;
   emailVerified: boolean;
   role: Role;
+  // Per-client audience to stamp on the access token's `aud` claim. Resolved
+  // from the user's registered ServiceClient. Undefined => env JWT_AUDIENCE.
+  audience?: string | undefined;
   ip?: string | undefined;
   userAgent?: string | undefined;
 }
@@ -48,6 +51,7 @@ export async function issueSession(input: IssueSessionInput): Promise<IssuedSess
     email: input.email,
     emailVerified: input.emailVerified,
     roles: rolesClaim(input.role),
+    ...(input.audience ? { audience: input.audience } : {}),
   });
 
   return { accessToken, refreshToken, refreshTokenExpiresAt: expiresAt, sessionId: session.id };
@@ -81,7 +85,10 @@ export async function rotateSession(refreshTokenPlain: string, ctx: RotateCtx = 
     throw invalid;
   }
 
-  const user = await prisma.user.findUnique({ where: { id: session.userId } });
+  const user = await prisma.user.findUnique({
+    where: { id: session.userId },
+    include: { registeredClient: { select: { audience: true } } },
+  });
   if (!user || user.status !== 'ACTIVE') throw invalid;
 
   const result = await issueSession({
@@ -89,6 +96,7 @@ export async function rotateSession(refreshTokenPlain: string, ctx: RotateCtx = 
     email: user.email,
     emailVerified: !!user.emailVerifiedAt,
     role: user.role,
+    audience: user.registeredClient?.audience ?? undefined,
     ip: ctx.ip,
     userAgent: ctx.userAgent,
   });

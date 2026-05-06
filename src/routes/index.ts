@@ -21,7 +21,13 @@ import {
   revokeSessionById,
   listSessions,
 } from '../domain/sessions.js';
-import { requireUser, currentUser, attachServiceIfPresent } from '../middleware/auth.js';
+import {
+  requireUser,
+  currentUser,
+  attachServiceIfPresent,
+  requireService,
+  currentService,
+} from '../middleware/auth.js';
 import { prisma } from '../infra/db.js';
 import { AppError } from '../middleware/errors.js';
 import { registerAdminRoutes } from './admin.js';
@@ -620,6 +626,61 @@ export async function registerRoutes(app: AppInstance) {
         expires_in: result.expiresIn,
         scope: result.scopes.join(' '),
       });
+    },
+  });
+
+  // --- Service self-discovery ---
+  // Authenticated with the service's own client_credentials access token.
+  // Returns the calling client's audience (and other public config) so an
+  // integrating service can fetch it once at startup instead of mirroring
+  // it in env vars.
+  const clientMeResponse = z.object({
+    clientId: z.string(),
+    name: z.string(),
+    scopes: z.array(z.string()),
+    audience: z.string(),
+    webBaseUrl: z.string().nullable(),
+  });
+  r.route({
+    method: 'GET',
+    url: '/v1/clients/me',
+    preHandler: [requireService],
+    schema: {
+      tags: ['oauth'],
+      summary: 'Public config for the calling service client',
+      description:
+        'Returns the calling client\'s audience and other public config. ' +
+        'Integrators fetch this at startup so they only need AUTH_API_URL ' +
+        '+ client credentials in env — issuer comes from /.well-known/' +
+        'openid-configuration, audience comes from here.',
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: clientMeResponse,
+        401: errorResponse,
+        404: errorResponse,
+      },
+    },
+    handler: async (req) => {
+      const e = env();
+      const svc = currentService(req);
+      const row = await prisma.serviceClient.findUnique({
+        where: { clientId: svc.clientId },
+        select: {
+          clientId: true,
+          name: true,
+          scopes: true,
+          audience: true,
+          webBaseUrl: true,
+        },
+      });
+      if (!row) throw new AppError(404, 'not_found', 'client not found');
+      return {
+        clientId: row.clientId,
+        name: row.name,
+        scopes: row.scopes,
+        audience: row.audience ?? e.JWT_AUDIENCE,
+        webBaseUrl: row.webBaseUrl,
+      };
     },
   });
 

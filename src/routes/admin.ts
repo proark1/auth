@@ -259,6 +259,8 @@ export async function registerAdminRoutes(app: AppInstance) {
     fromAddress: z.string().nullable(),
     verifyEmailSubject: z.string().nullable(),
     passwordResetSubject: z.string().nullable(),
+    audience: z.string().nullable(),
+    webBaseUrl: z.string().nullable(),
     createdAt: z.string().datetime(),
     lastUsedAt: z.string().datetime().nullable(),
   });
@@ -298,6 +300,8 @@ export async function registerAdminRoutes(app: AppInstance) {
     fromAddress: z.string().email().optional(),
     verifyEmailSubject: z.string().max(200).optional(),
     passwordResetSubject: z.string().max(200).optional(),
+    audience: z.string().min(1).max(200).optional(),
+    webBaseUrl: z.string().url().max(500).optional(),
   });
   r.route({
     method: 'POST',
@@ -318,6 +322,8 @@ export async function registerAdminRoutes(app: AppInstance) {
           fromAddress: z.string().nullable(),
           verifyEmailSubject: z.string().nullable(),
           passwordResetSubject: z.string().nullable(),
+          audience: z.string().nullable(),
+          webBaseUrl: z.string().nullable(),
         }),
         400: errorResponse,
         ...adminResponses,
@@ -335,6 +341,8 @@ export async function registerAdminRoutes(app: AppInstance) {
         fromAddress: created.fromAddress,
         verifyEmailSubject: created.verifyEmailSubject,
         passwordResetSubject: created.passwordResetSubject,
+        audience: created.audience,
+        webBaseUrl: created.webBaseUrl,
       });
     },
   });
@@ -346,6 +354,8 @@ export async function registerAdminRoutes(app: AppInstance) {
     fromAddress: z.string().email().nullable().optional(),
     verifyEmailSubject: z.string().max(200).nullable().optional(),
     passwordResetSubject: z.string().max(200).nullable().optional(),
+    audience: z.string().min(1).max(200).nullable().optional(),
+    webBaseUrl: z.string().url().max(500).nullable().optional(),
   });
   r.route({
     method: 'PATCH',
