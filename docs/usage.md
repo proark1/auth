@@ -104,6 +104,33 @@ curl -sS -X POST $BASE/v1/login/mfa -H 'content-type: application/json' \
 # → 200 (full token pair, same shape as above)
 ```
 
+### Log in via magic link (passwordless)
+
+```sh
+# Step 1: ask the server to email a one-shot sign-in link.
+curl -sS -X POST $BASE/v1/login/magic/request \
+  -H 'content-type: application/json' \
+  -d '{"email":"alice@example.com"}'
+# → 202 {"status":"queued"}
+```
+
+The request is silent on whether the address exists, is disabled, or is
+unverified — it always returns 202. The user receives an email at
+`/login/magic?token=...` (15-minute expiry, single use).
+
+```sh
+# Step 2: the page extracts the token and posts it to /verify.
+curl -sS -X POST $BASE/v1/login/magic/verify \
+  -H 'content-type: application/json' \
+  -d '{"token":"<token-from-email>"}'
+# → 200 (full token pair) — or, if the user has TOTP enrolled,
+#       {"mfa_required":true,"mfa_token":"…"} and continue at /v1/login/mfa.
+```
+
+Magic-link sign-in is treated as a first factor only: if the user has TOTP
+enrolled, the flow funnels through the same `/v1/login/mfa` exchange as a
+password login. This keeps the second-factor policy in one place.
+
 ### Refresh tokens
 
 Refresh tokens rotate on every use. The previous refresh token is invalidated;

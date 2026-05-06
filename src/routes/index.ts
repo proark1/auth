@@ -22,6 +22,7 @@ import {
 } from '../domain/mfa.js';
 import { regenerateBackupCodes, countUnusedBackupCodes } from '../domain/backupCodes.js';
 import { requestEmailChange, confirmEmailChange } from '../domain/emailChange.js';
+import { requestMagicLink, verifyMagicLink } from '../domain/magicLink.js';
 import { issueClientCredentialsToken } from '../domain/services.js';
 import {
   requestAccountDeletion,
@@ -398,6 +399,59 @@ export async function registerRoutes(app: AppInstance) {
         userAgent: req.headers['user-agent'],
       });
       return reply.code(200).send(tokenPayload(session));
+    },
+  });
+
+  // Magic-link login (passwordless). Two endpoints, mirrors the
+  // forgot/reset-password shape:
+  //   - request: always returns 202; sends a one-shot URL by email if the
+  //     account exists, is ACTIVE, and email-verified.
+  //   - verify:  exchanges the URL token for either a session or, if MFA is
+  //     enrolled, the same mfa_token shape /v1/login returns. Single-use,
+  //     atomic claim, 15-minute TTL.
+  const magicRequestBody = z.object({ email: emailSchema });
+  r.route({
+    method: 'POST',
+    url: '/v1/login/magic/request',
+    config: veryStrict,
+    schema: {
+      tags: ['auth'],
+      summary: 'Request a one-shot magic-link sign-in email',
+      description: 'Always returns 202 to prevent enumeration.',
+      body: magicRequestBody,
+      response: {
+        202: z.object({ status: z.literal('queued') }),
+        400: errorResponse,
+      },
+    },
+    handler: async (req, reply) => {
+      const { email } = req.body as z.infer<typeof magicRequestBody>;
+      await requestMagicLink(email, ctxFrom(req));
+      return reply.code(202).send({ status: 'queued' as const });
+    },
+  });
+
+  const magicVerifyBody = z.object({ token: z.string().min(1).max(512) });
+  r.route({
+    method: 'POST',
+    url: '/v1/login/magic/verify',
+    config: veryStrict,
+    schema: {
+      tags: ['auth'],
+      summary: 'Exchange a magic-link token for a session (or MFA challenge)',
+      body: magicVerifyBody,
+      response: {
+        200: loginResponse,
+        400: errorResponse,
+      },
+    },
+    handler: async (req, reply) => {
+      const { token } = req.body as z.infer<typeof magicVerifyBody>;
+      const result = await verifyMagicLink(token, ctxFrom(req));
+      if (result.kind === 'mfa_required') {
+        return reply.code(200).send({ mfa_required: true as const, mfa_token: result.mfaToken });
+      }
+      return reply.code(200).send(tokenPayload(result.session));
     },
   });
 
